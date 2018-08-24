@@ -34,6 +34,10 @@ class PositionSet(object):
         # output directory
         self.dirOut = 'OUTPUT'
 
+        # position-file (useful when merging output with headers)
+        self.filPos = 'NONE'
+        self.filTmp = 'tmp.xym'
+        
         # file to hold screen output from the routine
         self.filScreen='stdout.txt'
         
@@ -371,7 +375,31 @@ class PositionSet(object):
 
             os.rename(sMove, '%s/%s' % (self.dirOut, sMove))
                 
-                
+    def makeTmpNoAst(self, noComment=True):
+
+        """Copies the position file into a local temporary file without
+        asterisks
+
+        """
+
+        if not os.access(self.filPos, os.R_OK):
+            if self.Verbose:
+                print("getPosn.makeTmpNoAst WARN - position file not readable: %s" % (self.filPos))
+            return
+
+        # Loops through the input, moving it to tmp
+        with open(self.filPos, 'r') as rObj:
+            with open(self.filTmp, 'w') as wObj:
+                for line in rObj:
+                    if line.find('**') > -1:
+                        continue
+
+                    if noComment:
+                        if line.find('#') > -1:
+                            continue
+                    
+                    wObj.write(line)
+        
     def dirImgIsWD(self):
 
         """Utility - Returns True if the image directory is the working
@@ -426,12 +454,18 @@ def TestOne():
     PS.removeLocalImg()
     
 
-def TestMany(dirSrc='/media/datadrive0/Data/HST/9750/flc/f814w/', iMax=2):
+def TestMany(dirSrc='/media/datadrive0/Data/HST/9750/flc/f814w/', \
+             iMin=0, iMax=2):
 
     """Run two find instances"""
 
     lImgs = glob.glob('%s/*.fits.fz' % (dirSrc))
 
+    if iMin < 0:
+        iStart = 0
+    else:
+        iStart = iMin
+    
     if iMax < 0:
         nRows = len(lImgs)
     else:
@@ -439,10 +473,10 @@ def TestMany(dirSrc='/media/datadrive0/Data/HST/9750/flc/f814w/', iMax=2):
         
     tStart = time.time()
 
-    print("TestMany INFO: starting set of %i images at %s ..." % \
-          (nRows, time.strftime('%X %x %Z')))
+    print("TestMany INFO: starting set of (%i-%i) = %i images at %s ..." % \
+          (iStart, nRows, nRows - iStart, time.strftime('%X %x %Z')))
     
-    for iImg in range(nRows):
+    for iImg in range(iStart, nRows):
         PS = PositionSet(lImgs[iImg], doTest=False, Verbose=False)
         PS.wrapSetupForRun()
         PS.runFind()
@@ -450,4 +484,23 @@ def TestMany(dirSrc='/media/datadrive0/Data/HST/9750/flc/f814w/', iMax=2):
 
     dt = time.time()-tStart
     print("TestMany INFO: did %i images in %.2f minutes" \
-          % (dt/60.))
+          % (nRows, dt/60.))
+
+# steps to process the output for input to matching routine:
+#
+# 1: grep -v "*\*\*\*" input file --> tmp.txt . This may be faster
+# than using python's own IO methods.
+#
+# 2: load tmp.txt into table (all floats, not string)
+#
+# 3: uncompress the SUB.fits file, load the header (OR - find the
+# original hlet.fits . I think I prefer to use the SUB.fits file since
+# we already know where to find it)
+#
+# 4: merge the header with that of the table
+#
+# 5: write the table to fits, in a "gathered" results diretctory (for
+# fast reading).
+#
+# Most of the above can be implemented using methods in the
+# PositionSet() object.
