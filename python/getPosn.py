@@ -11,6 +11,9 @@ import subprocess
 from astropy.io import fits
 import glob
 
+from astropy.table import Table
+from astropy.time import Time
+
 class PositionSet(object):
 
     def __init__(self, pathImg='', doTest=True, Verbose=True):
@@ -37,6 +40,10 @@ class PositionSet(object):
         # position-file (useful when merging output with headers)
         self.filPos = 'NONE'
         self.filTmp = 'tmp.xym'
+
+        # for fusing positions and header
+        self.tPosn = Table()
+        self.filFused = 'NONE'
         
         # file to hold screen output from the routine
         self.filScreen='stdout.txt'
@@ -215,6 +222,17 @@ class PositionSet(object):
             print("PositionSet.copyImgHere INFO - copying in file %s" % (self.pathImg))
         shutil.copy(self.pathImg, dirDes)
 
+    def getHeader(self):
+
+        """Load the FITS header"""
+
+        if not os.access(self.filUse, os.R_OK):
+            if self.Verbose:
+                print("PositionSet.getHeader WARN - image filr not readable: %s" % (self.filUse))
+            return
+
+        self.hdr=fits.getheader(self.filUse, verify='silentfix')
+        
     def parseFilter(self):
 
         """Use the FITS header to find the filter"""
@@ -224,7 +242,7 @@ class PositionSet(object):
                 print("PositionSet.parseFilter WARN - image filr not readable: %s" % (self.filUse))
             return
 
-        self.hdr=fits.getheader(self.filUse)
+        self.getHeader()
 
         # currently we only care about f814w or f606w
 
@@ -399,6 +417,48 @@ class PositionSet(object):
                             continue
                     
                     wObj.write(line)
+
+    def loadTmpfil(self):
+
+        """Loads the temporary position file without asterisks"""
+
+        if not os.access(self.filTmp, os.R_OK):
+            if self.Verbose:
+                print("PosnSet.loadTmpFil WARN - tmpfile not readable: %s" \
+                      % (self.filTmp))
+
+            return
+
+        self.tPosn = Table.read(self.filTmp, format='ascii')
+
+    def appendHeaderToTableMeta(self):
+
+        """Appends selected FITS metadata to the table metadata"""
+
+        # I used the following command to make this easier:
+        #
+        # dfits j8q642dqq_flc_SUB.fits | awk '{print $1}' | sed "s/=/,/g" | sed "s/,//g" | awk '{print "\""$1"\","}'
+
+        lKeys = ["CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CTYPE1", \
+                 "CTYPE2", "CD1_1", "CD1_2", "CD2_1", "CD2_2", \
+                 "ORIENTAT", "PA_APER", "PA_V3", "DATE-OBS", \
+                 "TIME-OBS", "EXPTIME", \
+                 "RA_TARG", "DEC_TARG", "PROPOSID", "FILTER1", \
+                 "FILTER2", "CCDGAIN"]
+
+        # (TARGNAME and ROOTNAME appear to be unparseable, verify.fix
+        # does not seem to fix this...)
+        
+        for sKey in lKeys:
+            self.tPosn.meta[sKey] = self.hdr[sKey]
+
+        # let's also calculate the JD if we have both DATE-OBS and
+        # TIME-OBS
+        tStr = '%sT%s' \
+               % (self.hdr['DATE-OBS'], self.hdr['TIME-OBS'])
+        tt = Time(tStr)
+        self.tPosn.meta['MJD'] = tt.mjd
+        self.tPosn.meta['JD'] = tt.jd
         
     def dirImgIsWD(self):
 
@@ -434,6 +494,60 @@ directory, False otherwise.
         self.organizeOutput()
         self.removeUnpacked()
         self.removeLocalImg()
+
+    def wrapFusePosnHeader(self):
+
+        """Wrapper: loads a position file and fuses it with the header from
+the subtracted fits file. Then writes out to fits position file for
+rapid input.
+
+        """
+
+        # ENSURE filenames are correctly set
+        filHead = os.path.splitext(self.filPos)[0]
+        filStem = os.path.split(filHead)[-1]
+
+        # tail of original file for output filename
+        filExten = self.filPos.split('.')[-1]
+        
+        self.filImg = '%s_SUB.fits.fz' % (filStem)
+        self.filUse = self.filImg.split('.fz')[0]
+        self.filFused = '%s_%s_noAst.fits' % (filStem, filExten)
+
+        # now remove the asterisks from the image file, putting them
+        # into the tmp file. To be sure there is no confusion, remove
+        # the tmp file first.
+        if os.access(self.filTmp, os.R_OK):
+            os.remove(self.filTmp)
+
+        self.makeTmpNoAst()
+        self.loadTmpfil()
+
+        # Uncompress the SUB.fits, load the header, and remove the
+        # uncompressed version IF the compressed version is still on
+        # disk
+        self.chooseUnpacker()
+        self.unpackImg()
+        self.getHeader()
+        self.removeUnpacked()
+
+        # add the image header to the table. Because we want to steer
+        # clear of format problems, we select the keywords we want.
+        self.appendHeaderToTableMeta()
+
+        # now write the resulting table to fits. Include the output
+        # directory in the path so it all goes to one place
+        if not os.access(self.dirOut, os.R_OK):
+            os.makedirs(self.dirOut)
+
+        pathFused = '%s/%s' % (self.dirOut, self.filFused)
+        
+        self.tPosn.write(pathFused, overwrite=True, format='fits')
+        
+        #print self.tPosn.meta
+        
+        #print("PositionSet.wrapFusePosnHeader INFO: %s, %s, %s" \
+        #      % (self.filPos, self.filUse, self.filFused))
         
 def TestOne():
 
@@ -486,6 +600,46 @@ def TestMany(dirSrc='/media/datadrive0/Data/HST/9750/flc/f814w/', \
     print("TestMany INFO: did %i images in %.2f minutes" \
           % (nRows, dt/60.))
 
+
+def TestFuseOne(filPos='j8q642dqq_flc.xymu'):
+
+    """Test fusing a single file with its header"""
+
+    PF = PositionSet(Verbose=True)
+    PF.filPos = filPos[:]
+    PF.dirOut = '/media/datadrive0/Data/HST/9750/PROC/f814w/gathered'
+
+    # now let's see where we are
+    PF.wrapFusePosnHeader()
+
+def FuseMany(srchPos='xymu'):
+
+    """Fuses all the position-files with their appropriate headers,
+removing bad-readings (***) along the way.
+
+    """
+
+    lPosns = glob.glob('./*.%s' % (srchPos))
+
+    if len(lPosns) < 1:
+        return
+
+    tZer = time.time()
+    print("FuseMany INFO - about to fuse %i .%s files:" \
+          % (len(lPosns), srchPos))
+
+    for iFil in range(len(lPosns)):
+        PF = PositionSet(Verbose=False)
+        PF.filPos = lPosns[iFil]
+        PF.dirOut = '/media/datadrive0/Data/HST/9750/PROC/f814w/gathered'
+        print("FuseMany INFO: %i of %i: %s" \
+              % (iFil, len(lPosns), lPosns[iFil]))
+        PF.wrapFusePosnHeader()
+
+    tDone = time.time() - tZer
+    print("FuseMany INFO: did %i files in %.2f minutes" % \
+          (iFil+1, tDone/60.))
+        
 # steps to process the output for input to matching routine:
 #
 # 1: grep -v "*\*\*\*" input file --> tmp.txt . This may be faster
