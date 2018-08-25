@@ -34,6 +34,11 @@ class PositionSet(object):
         self.i2xSUBT = 'SUBT'
         self.i2xQSEL = ''
 
+        self.magMin = -99.9
+        self.magMax =  99.9
+        self.qMin = -99.9
+        self.qMax =  99.9
+
         # output directory
         self.dirOut = 'OUTPUT'
 
@@ -431,6 +436,56 @@ class PositionSet(object):
 
         self.tPosn = Table.read(self.filTmp, format='ascii')
 
+    def renameTableColnames(self):
+
+        """Sets the column names for the table. Hardcoded to AKWFC."""
+
+        colNames = self.tPosn.colnames[:]
+
+        if len(colNames) < 4:
+            return
+
+        # the initial three are the same no matter what
+        namesThree = ['X', 'Y', 'M']
+        for iFirst in range(len(namesThree)):
+            self.tPosn[colNames[iFirst]].name = namesThree[iFirst][:]
+
+        # the final column will also be 'Q'
+        sLast = colNames[-1]
+        self.tPosn[sLast].name = 'Q'
+
+        # Those are the columns we need... if there are any more, we
+        # could modify this later.
+
+    def trimTable(self):
+
+        """Trims the photometry table by apparent magnitude and q"""
+
+        if len(self.tPosn) < 1:
+            return
+
+        bGood = np.repeat(True, len(self.tPosn))
+        bMag = np.copy(bGood)
+        bQ = np.copy(bGood)
+
+        if 'M' in self.tPosn.colnames:
+            mag = self.tPosn['M']
+            bMag = (mag >= self.magMin) & (mag < self.magMax)
+            self.tPosn.meta['magMin'] = np.float(self.magMin)
+            self.tPosn.meta['magMax'] = np.float(self.magMax)
+
+        if 'Q' in self.tPosn.colnames:
+            qFac = self.tPosn['Q']
+            bQ = (qFac >= self.qMin) & (qFac < self.qMax)
+            self.tPosn.meta['qMin'] = np.float(self.qMin)
+            self.tPosn.meta['qMax'] = np.float(self.qMax)
+
+        # combine the conditions...
+        bGood = (bGood) & (bMag) & (bQ)
+
+        # ... and trim the table
+        self.tPosn = self.tPosn[bGood]
+
     def appendHeaderToTableMeta(self):
 
         """Appends selected FITS metadata to the table metadata"""
@@ -495,7 +550,7 @@ directory, False otherwise.
         self.removeUnpacked()
         self.removeLocalImg()
 
-    def wrapFusePosnHeader(self):
+    def wrapFusePosnHeader(self, doTrim=True):
 
         """Wrapper: loads a position file and fuses it with the header from
 the subtracted fits file. Then writes out to fits position file for
@@ -510,9 +565,14 @@ rapid input.
         # tail of original file for output filename
         filExten = self.filPos.split('.')[-1]
         
+        # filename flag for trimmed
+        sTrim = ''
+        if doTrim:
+            sTrim = '_trim'
+
         self.filImg = '%s_SUB.fits.fz' % (filStem)
         self.filUse = self.filImg.split('.fz')[0]
-        self.filFused = '%s_%s_noAst.fits' % (filStem, filExten)
+        self.filFused = '%s_%s_noAst%s.fits' % (filStem, filExten, sTrim)
 
         # now remove the asterisks from the image file, putting them
         # into the tmp file. To be sure there is no confusion, remove
@@ -522,6 +582,11 @@ rapid input.
 
         self.makeTmpNoAst()
         self.loadTmpfil()
+
+        # do the renaming and trimming
+        self.renameTableColnames()
+        if doTrim:
+            self.trimTable()
 
         # Uncompress the SUB.fits, load the header, and remove the
         # uncompressed version IF the compressed version is still on
