@@ -11,6 +11,8 @@ import subprocess
 from astropy.io import fits
 import glob
 
+import numpy as np
+
 from astropy.table import Table
 from astropy.time import Time
 
