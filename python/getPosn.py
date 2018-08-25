@@ -37,7 +37,7 @@ class PositionSet(object):
         self.i2xQSEL = ''
 
         self.magMin = -13.8
-        self.magMax =  -10.
+        self.magMax =  -12.0
         self.qMin = 0.
         self.qMax = 0.5
 
