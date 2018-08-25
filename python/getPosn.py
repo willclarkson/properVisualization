@@ -36,10 +36,10 @@ class PositionSet(object):
         self.i2xSUBT = 'SUBT'
         self.i2xQSEL = ''
 
-        self.magMin = -99.9
-        self.magMax =  99.9
-        self.qMin = -99.9
-        self.qMax =  99.9
+        self.magMin = -13.8
+        self.magMax =  -10.
+        self.qMin = 0.
+        self.qMax = 0.5
 
         # output directory
         self.dirOut = 'OUTPUT'
