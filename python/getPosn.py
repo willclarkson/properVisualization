@@ -696,7 +696,8 @@ removing bad-readings (***) along the way.
     for iFil in range(len(lPosns)):
         PF = PositionSet(Verbose=False)
         PF.filPos = lPosns[iFil]
-        PF.dirOut = '/media/datadrive0/Data/HST/9750/PROC/f814w/gathered'
+        PF.dirOut = '/media/datadrive0/Data/HST/9750/PROC/f814w/gathered/%s' \
+            % (srchPos)
         print("FuseMany INFO: %i of %i: %s" \
               % (iFil, len(lPosns), lPosns[iFil]))
         PF.wrapFusePosnHeader()
