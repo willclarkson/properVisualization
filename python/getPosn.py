@@ -708,21 +708,3 @@ removing bad-readings (***) along the way.
     print("FuseMany INFO: did %i files in %.2f minutes" % \
           (iFil+1, tDone/60.))
         
-# steps to process the output for input to matching routine:
-#
-# 1: grep -v "*\*\*\*" input file --> tmp.txt . This may be faster
-# than using python's own IO methods.
-#
-# 2: load tmp.txt into table (all floats, not string)
-#
-# 3: uncompress the SUB.fits file, load the header (OR - find the
-# original hlet.fits . I think I prefer to use the SUB.fits file since
-# we already know where to find it)
-#
-# 4: merge the header with that of the table
-#
-# 5: write the table to fits, in a "gathered" results diretctory (for
-# fast reading).
-#
-# Most of the above can be implemented using methods in the
-# PositionSet() object.
