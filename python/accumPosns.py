@@ -18,11 +18,14 @@ plt.ion()
 
 class PosnSet(object):
 
-    def __init__(self, pathAccum='TEST_matchedMulti_0-50.fits'):
+    def __init__(self, pathAccum='TEST_matchedMulti_51-150.fits'):
 
         self.pathAccum = pathAccum[:]
         self.tBig = Table()
 
+        self.pathTransf = 'TEST_transf.fits'
+        self.setTransFile()
+        
         # arrays for X, Y, M, Q
         self.aX = np.array([])
         self.aY = np.array([])
@@ -65,6 +68,13 @@ class PosnSet(object):
         # boresight for the corrected-frame
         self.cenX = 2096.
         self.cenY = 2096.
+
+    def setTransFile(self):
+
+        """Sets the filename for the transformation parameters"""
+
+        stem = os.path.split(self.pathAccum)[-1]
+        self.pathTransf = 'transf_%s' % (stem)
         
     def clearBigTable(self):
 
@@ -273,10 +283,16 @@ accumulation of median positions.
             ax2.set_xlabel(r'$\delta X$ (pix)')
             ax2.set_ylabel(r'$\delta Y$ (pix)')
 
-            print("fitTransform INFO: %.2e, %.2e" % \
-                  (np.std(diffsX[bUse][TP.bUse]), \
-                   np.std(diffsY[bUse][TP.bUse]) ) )
-            
+            #print("fitTransform INFO: %.2e, %.2e" % \
+            #      (np.std(diffsX[bUse][TP.bUse]), \
+            #       np.std(diffsY[bUse][TP.bUse]) ) )
+
+    def writeTransfTable(self):
+
+        """Writes the transformation table to disk"""
+
+        self.tPars.write(self.pathTransf, overwrite=True)
+        
     def showPosns(self):
 
         """Debug routine - shows the positions"""
@@ -434,11 +450,7 @@ def TestLoad(iShow = 10000):
     PS.initTransformTable()
     
     PS.fitAllTransforms()
-
+    PS.writeTransfTable()
+    
     print PS.tPars
     
-    # PS.showPosns()
-    
-    print PS.aXshifted[:,iShow]
-
-
