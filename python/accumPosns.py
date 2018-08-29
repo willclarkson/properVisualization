@@ -24,7 +24,9 @@ class PosnSet(object):
         self.tBig = Table()
 
         self.pathTransf = 'TEST_transf.fits'
+        self.pathMed = 'TEST_medians.fits'
         self.setTransFile()
+        self.setMedList()
         
         # arrays for X, Y, M, Q
         self.aX = np.array([])
@@ -69,13 +71,23 @@ class PosnSet(object):
         self.cenX = 2096.
         self.cenY = 2096.
 
+        # Median transformed quantities
+        self.tMed = Table()
+        
     def setTransFile(self):
 
         """Sets the filename for the transformation parameters"""
 
         stem = os.path.split(self.pathAccum)[-1]
         self.pathTransf = 'transf_%s' % (stem)
-        
+
+    def setMedList(self):
+
+        """Sets the filename for the median list of positions"""
+
+        stem = os.path.split(self.pathAccum)[-1]
+        self.pathMed = 'mednPosn_%s' % (stem)
+
     def clearBigTable(self):
 
         """Re-initializes the big table"""
@@ -179,6 +191,28 @@ class PosnSet(object):
         self.aXrecen = self.aXshifted - self.cenX
         self.aYrecen = self.aYshifted - self.cenY
 
+    def medianTransformed(self):
+
+        """Finds the median of the transformed quantities. Does not do any
+selection by measurement."""
+
+        # initialise the table
+        self.tMed = Table()
+
+        self.tMed['X'] = np.median(self.aXmapped, axis=0)
+        self.tMed['Y'] = np.median(self.aYmapped, axis=0)
+        self.tMed['eX'] = np.std(self.aXmapped, axis=0)
+        self.tMed['eY'] = np.std(self.aYmapped, axis=0)
+        
+        # now for the other quantities:
+        for sCol in ['M','Q']:
+            thisAttr = 'a%s' % (sCol)
+            aThis = getattr(self, thisAttr)
+            eCol = 'e%s' % (sCol)
+            self.tMed[sCol] = np.median(aThis, axis=0)
+            self.tMed[eCol] = np.std(aThis, axis=0)
+            
+        
     def initTransformTable(self):
 
         """Initialises the table of transformation parameters"""
@@ -291,7 +325,19 @@ accumulation of median positions.
 
         """Writes the transformation table to disk"""
 
+        if len(self.tPars) < 1:
+            return
+        
         self.tPars.write(self.pathTransf, overwrite=True)
+
+    def writeMedList(self):
+
+        """Writes the median position list to disk"""
+
+        if len(self.tMed) < 1:
+            return
+        
+        self.tMed.write(self.pathMed, overwrite=True)
         
     def showPosns(self):
 
@@ -439,9 +485,9 @@ def err_leastsq(pars, x=np.array([]), y=np.array([]), z=np.array([]) ):
 
     return z - fLinear(pars, x, y)
     
-def TestLoad(iShow = 10000):
+def TestLoad(pathAccum='TEST_matchedMulti_51-150.fits', iShow = 10000):
 
-    PS = PosnSet()
+    PS = PosnSet(pathAccum)
     PS.loadAccum()
     PS.extractArrays()
     PS.estOffsets()
@@ -451,6 +497,27 @@ def TestLoad(iShow = 10000):
     
     PS.fitAllTransforms()
     PS.writeTransfTable()
+
+    PS.medianTransformed()
+    PS.writeMedList()
+
+    # Some syntax to plot the results. Could move into a method.
+    fig3 = plt.figure(3)
+    fig3.clf()
+    ax3 = fig3.add_subplot(211)
+    ax4 = fig3.add_subplot(212, sharex=ax3, sharey=ax3)
     
-    print PS.tPars
-    
+    dum = ax3.scatter(PS.tMed['M'], PS.tMed['eX'], alpha=0.25, s=4)
+    ax3.set_xlabel('Instrumental mag')
+    ax3.set_ylabel(r'$\sigma(X)$, pix')
+    ax3.grid(which='both', visible=True, zorder=1)
+
+    dum4 = ax4.scatter(PS.tMed['M'], PS.tMed['eY'], alpha=0.25, s=4)
+    ax4.set_xlabel('Instrumental mag')
+    ax4.set_ylabel(r'$\sigma(Y)$, pix')
+    ax4.grid(which='both', visible=True, zorder=1)
+
+    for ax in [ax3, ax4]:
+        ax.set_yscale('log')
+        ax.set_ylim(1e-3,1e-1)
+        ax.set_xlim(-13.9, -11.9) 

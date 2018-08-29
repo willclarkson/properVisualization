@@ -679,7 +679,7 @@ def TestFuseOne(filPos='j8q642dqq_flc.xymu'):
     # now let's see where we are
     PF.wrapFusePosnHeader()
 
-def FuseMany(srchPos='xymu'):
+def FuseMany(srchPos='xymu', filtr='f814w'):
 
     """Fuses all the position-files with their appropriate headers,
 removing bad-readings (***) along the way.
@@ -698,8 +698,8 @@ removing bad-readings (***) along the way.
     for iFil in range(len(lPosns)):
         PF = PositionSet(Verbose=False)
         PF.filPos = lPosns[iFil]
-        PF.dirOut = '/media/datadrive0/Data/HST/9750/PROC/f814w/gathered/%s' \
-            % (srchPos)
+        PF.dirOut = '/media/datadrive0/Data/HST/9750/PROC/%s/gathered/%s' \
+            % (filtr, srchPos)
         print("FuseMany INFO: %i of %i: %s" \
               % (iFil, len(lPosns), lPosns[iFil]))
         PF.wrapFusePosnHeader()
