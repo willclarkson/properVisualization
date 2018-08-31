@@ -25,6 +25,9 @@ class MatchSet(object):
         self.dirTables = ''
         self.defaultDir()
 
+        # output directory
+        self.dirOut='matches'
+        
         # match criteria
         self.ifmt1 = "fits"
         self.ifmt2 = "fits"
@@ -91,6 +94,26 @@ class MatchSet(object):
         """Finds lists of positions"""
 
         self.lFiles = glob.glob(self.srchString)
+
+    def buildOutNamesTwo(self):
+
+        """Constructs the output filenames when being used in a pair"""
+
+        stemInp = os.path.splitext(self.inList2)[0].split('_xy')[0]
+        stemRef = 'refpos'
+        stemOut = '%s_to_%s' % (stemInp, stemRef)
+
+        self.filStdout = '%s_stdout.txt' % (stemOut)
+        self.outFil = '%s.fits' % (stemOut)
+
+        if len(self.dirOut) < 2:
+            return
+
+        if not os.access(self.dirOut, os.R_OK):
+            os.makedirs(self.dirOut)
+
+        self.filStdout = '%s/%s' % (self.dirOut, self.filStdout)
+        self.outFil = '%s/%s' % (self.dirOut, self.outFil)
         
     def buildCommandTwo(self):
 
@@ -208,14 +231,24 @@ class MatchSet(object):
                 # now dump screen output
                 wObj.write(sOut)
 
-def TestMatchTwo():
+def TestMatchTwo(reflist='', maxDist=2.):
 
+    """Tests matching two star-lists"""
     
     MS = MatchSet()
+
+    # if a reference list was supplied, use that instead
+    if len(reflist) > 1:
+        if reflist.find('fits') > -1:
+            MS.inList1=reflist[:]
+            MS.buildOutNamesTwo()
+    MS.maxDist=maxDist
+    
     MS.buildCommandTwo()
     MS.clobberOutputFile()
     MS.runMatcher()
 
+    
 def TestMatchMulti(iStart=0, iEnd=10):
 
     MS = MatchSet(iStart=iStart, iEnd=iEnd)    
@@ -225,3 +258,47 @@ def TestMatchMulti(iStart=0, iEnd=10):
     print MS.cmdMatch
 
     MS.runMatcher()
+
+def TestMatchManyToRef(refList='./try2/mednPosn_TEST_matchedMulti_0-125.fits', \
+                       srchString='*_flc_xymc_noAst_trim.fits', \
+                       iLo=0, iHi=-1, \
+                       maxDist=2., Verbose=True):
+
+    """Matches many files to reference list"""
+
+    # This might be slightly easier using the MatchSet's own glob
+    # functionality.  But this way of doing things keeps things
+    # separate.
+
+    if not os.access(refList, os.R_OK):
+        print("TestMatchManyToRef WARN - cannot read refList: %s" % (refList))
+        return
+
+    
+    # list of frames to match against the reference
+    lFrames = glob.glob(srchString)
+
+    if len(lFrames) < 1:
+        print("TestMatchManyToRef WARN - no frames match %s" % (srchString))
+        return
+
+    if iHi < 0 or iHi > len(lFrames):
+        iHi = len(lFrames)
+
+    for iFrm in range(iLo, iHi):
+        inpList = lFrames[iFrm]
+        MS = MatchSet()
+        MS.Verbose = Verbose
+        MS.maxDist = maxDist
+        
+        MS.inList1 = refList[:]
+        MS.inList2 = inpList[:]
+        MS.buildOutNamesTwo()
+
+        if Verbose:
+            print("TestMatchManyToRef INFO: %4i of %4i: %s" % \
+                  (iFrm, iHi-iLo, MS.outFil))
+        
+        MS.buildCommandTwo()
+        MS.clobberOutputFile()
+        MS.runMatcher()

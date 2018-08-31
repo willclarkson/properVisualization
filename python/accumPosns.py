@@ -8,7 +8,7 @@
 
 from astropy.table import Table, Column
 from astropy import units as u
-import os
+import os, sys, glob
 import numpy as np
 
 from scipy.optimize import leastsq
@@ -27,6 +27,9 @@ class PosnSet(object):
         self.pathMed = 'TEST_medians.fits'
         self.setTransFile()
         self.setMedList()
+
+        # subdirectory for output?
+        self.dirOut = ''
         
         # arrays for X, Y, M, Q
         self.aX = np.array([])
@@ -49,7 +52,7 @@ class PosnSet(object):
 
         # choice of reference array (for shifting lists before fitting
         # cross-transformations)
-        self.iRef = 0
+        self.iRef = -1 # initialized at this
 
         # a few auxiliary arrays we'll need later
         self.dXmed = np.array([])
@@ -88,6 +91,19 @@ class PosnSet(object):
         stem = os.path.split(self.pathAccum)[-1]
         self.pathMed = 'mednPosn_%s' % (stem)
 
+    def checkDirOut(self):
+
+        """Prepends the output directory to outpaths if len > 2"""
+
+        if len(self.dirOut) < 3:
+            return
+
+        if not os.access(self.dirOut, os.R_OK):
+            os.makedirs(self.dirOut)
+
+        self.pathTransf = '%s/%s' % (self.dirOut, self.pathTransf)
+        self.pathMed = '%s/%s' % (self.dirOut, self.pathMed)
+        
     def clearBigTable(self):
 
         """Re-initializes the big table"""
@@ -116,7 +132,14 @@ class PosnSet(object):
             return
         
         # how many datasets went into this?
-        self.nSets = int(self.tBig.colnames[-1].split('_')[-1])
+
+        # currently a fudge for 'Separation' being the final column
+        # (which happens if this was a pair rather than an accumulated
+        # list of many)
+        try:
+            self.nSets = int(self.tBig.colnames[-1].split('_')[-1])
+        except:
+            self.nSets = int(self.tBig.colnames[-2].split('_')[-1])
         self.nRows = len(self.tBig)
 
         # initialize the arrays
@@ -133,15 +156,32 @@ class PosnSet(object):
         if freemem:
             self.clearBigTable()
 
-    def estOffsets(self):
+    def estOffsets(self, iRef=-1):
         
-        """Estimates differences from the median in each case"""
+        """Estimates differences from the median in each case
 
-        self.medX = np.median(self.aX, axis=0)
-        self.medY = np.median(self.aY, axis=0)
-        self.medM = np.median(self.aM, axis=0)
-        self.medQ = np.median(self.aQ, axis=0)
+        if iRef > -1, then the positions in the iRef'th list are used
+        in preference of the median.
 
+        """
+
+        # pass the iRef up to the instance
+        self.iRef = iRef
+        
+        if self.iRef < 0:
+            self.medX = np.median(self.aX, axis=0)
+            self.medY = np.median(self.aY, axis=0)
+            self.medM = np.median(self.aM, axis=0)
+            self.medQ = np.median(self.aQ, axis=0)
+        else:
+            self.medX = self.aX[iRef]
+            self.medY = self.aY[iRef]
+            self.medM = self.aM[iRef]
+            self.medQ = self.aQ[iRef]
+
+        # pass the iRef up to the instance
+        self.iRef = iRef
+            
         # replicate these all to 2D arrays
         aMedX = self.aX * 0. + self.medX
         aMedY = self.aY * 0. + self.medY
@@ -191,10 +231,14 @@ class PosnSet(object):
         self.aXrecen = self.aXshifted - self.cenX
         self.aYrecen = self.aYshifted - self.cenY
 
-    def medianTransformed(self):
+    def medianTransformed(self, origFrame=True):
 
         """Finds the median of the transformed quantities. Does not do any
-selection by measurement."""
+selection by measurement. If OrigFrame=True, the list is moved back to
+the boresight of the original pointing (rather than being about
+zero).
+
+        """
 
         # initialise the table
         self.tMed = Table()
@@ -203,7 +247,20 @@ selection by measurement."""
         self.tMed['Y'] = np.median(self.aYmapped, axis=0)
         self.tMed['eX'] = np.std(self.aXmapped, axis=0)
         self.tMed['eY'] = np.std(self.aYmapped, axis=0)
-        
+
+        # Handle the offset so that the metadata are written no matter what
+        xc = 0.
+        yc = 0.        
+        if origFrame:
+            xc = self.cenX
+            yc = self.cenY
+            self.tMed['X'] += xc
+            self.tMed['Y'] += yc
+
+        self.tMed.meta['about0'] = ~origFrame
+        self.tMed.meta['xc'] = self.cenX
+        self.tMed.meta['yc'] = self.cenY
+            
         # now for the other quantities:
         for sCol in ['M','Q']:
             thisAttr = 'a%s' % (sCol)
@@ -272,14 +329,27 @@ accumulation of median positions.
         # let's try selecting objects
         bUse = self.aM[iSet] < self.faintM
 
-        xRef = np.median(self.aXrecen, axis=0)
-        yRef = np.median(self.aYrecen, axis=0)
+        if self.iRef < 0:
+            xRef = np.median(self.aXrecen, axis=0)
+            yRef = np.median(self.aYrecen, axis=0)
+        else:
+            xRef = self.aXrecen[self.iRef]
+            yRef = self.aYrecen[self.iRef]
 
+            
         xInp = self.aXrecen[iSet]
         yInp = self.aYrecen[iSet]
+
+        # If one of the datasets is the reference frame (i.e. if
+        # self.iRef > -1) then we initialise the transformation but
+        # don't actually run it. Otherwise, we run the
+        # transformation. This should lead to the iSet == self.iRef
+        # being assigned the identity in the output.
+        doFit = iSet != self.iRef
         
         TP = TransfPair(xRef[bUse], yRef[bUse], \
-                        xInp[bUse], yInp[bUse], True)
+                        xInp[bUse], yInp[bUse], \
+                        runOnInit=doFit)
 
         # Initialise the params table if it's not already set
         if len(self.tPars.colnames) < 1:
@@ -338,6 +408,20 @@ accumulation of median positions.
             return
         
         self.tMed.write(self.pathMed, overwrite=True)
+
+    def wrapFit(self, iRef=-1):
+
+        """One-line wrapper to do the fitting"""
+
+        self.loadAccum()
+        self.extractArrays()
+        self.estOffsets(iRef)
+        self.shiftOntoMedian()
+        self.initTransformTable()
+        self.fitAllTransforms()
+        self.checkDirOut()
+        self.writeTransfTable()
+
         
     def showPosns(self):
 
@@ -491,7 +575,7 @@ def TestLoad(pathAccum='TEST_matchedMulti_51-150.fits', iShow = 10000):
     PS.loadAccum()
     PS.extractArrays()
     PS.estOffsets()
-    PS.pickRefFrame()
+    # PS.pickRefFrame()
     PS.shiftOntoMedian()
     PS.initTransformTable()
     
@@ -521,3 +605,49 @@ def TestLoad(pathAccum='TEST_matchedMulti_51-150.fits', iShow = 10000):
         ax.set_yscale('log')
         ax.set_ylim(1e-3,1e-1)
         ax.set_xlim(-13.9, -11.9) 
+
+def TestFitPair(pathAccum='./matches/j8q629skq_flc_to_refpos.fits', \
+                dirOut='transf'):
+
+    """Test fitting the transformation for just two images in the same
+fits file"""
+
+    PP = PosnSet(pathAccum)
+    PP.dirOut = dirOut[:]
+    PP.loadAccum()
+    PP.extractArrays()
+    PP.estOffsets(0)
+    PP.iRef = 0 # should be redundant with prev line
+    PP.shiftOntoMedian()
+    PP.initTransformTable()
+    PP.fitAllTransforms()
+    PP.checkDirOut()
+    PP.writeTransfTable()
+
+def TestFitManyPairs(iMin = 0, iMax=-1, \
+                     srchStr='./matches/*_flc_to_refpos.fits', \
+                     dirOut='transf'):
+
+    """Given many files with individual objects mapped onto a single
+    reference frame, fit all to the same reference frame."""
+
+    lPairs = glob.glob(srchStr)
+    if len(lPairs) < 1:
+        print("accumPosns.TestFitManyPairs WARN - no files match string %s" \
+              % (srchStr))
+        return
+
+    if iMax < 0 or iMax > len(lPairs):
+        iMax = len(lPairs)
+
+    # ok now we loop through.
+    for iFil in range(iMin, iMax):
+        thisAccum = lPairs[iFil][:]
+        
+        sys.stdout.write("\rTestFitManyPairs INFO: %4i of %4i: %s" \
+                         % (iFil, iMax-iMin, thisAccum))
+        sys.stdout.flush()
+
+        PP = PosnSet(thisAccum)
+        PP.dirOut = dirOut[:]
+        PP.wrapFit(0)
