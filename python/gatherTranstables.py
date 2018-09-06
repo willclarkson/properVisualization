@@ -4,7 +4,7 @@
 
 # 2018-09-04 WIC - gather pointing information from various places
 
-from astropy.table import Table, vstack, Column
+from astropy.table import Table, vstack, Column, join
 from astropy.io import fits
 import os
 import glob
@@ -164,9 +164,50 @@ class Transf(object):
 
 def TestGather():
 
+    # example use:
+    
+    # cd  /media/datadrive0/Data/HST/9750/PROC/f606w/gathered/xymc
+
+    # !cp -p /home/wiclarks/Projects/properVisualization/tmpIntermed/vafactors.txt .
+
+    # gatherTranstables.TestGather()
+
+    # takes about 5-10s for 250 images
+    
     POINT = Pointings()
     POINT.findTransfs()
     POINT.loadVAFACTOR()
     POINT.accumTransfs()
     POINT.writeFused()
 
+def joinPointings(set1='pointings_f814w.fits', \
+                  set2='pointings_f606w.fits', \
+                  setOut='pointingsAll.fits'):
+    
+    """Utility - joins the two pointings"""
+
+    # cd /media/datadrive0/Data/HST/9750/PROC/collected
+    
+    for tThis in [set1, set2]:
+        if not os.access(tThis, os.R_OK):
+            print("joinPointings WARN - cannot read input table: %s" \
+                  % (tThis))
+            return
+
+    tOne = Table.read(set1)
+    tTwo = Table.read(set2)
+
+    # add a column for filter
+    tOne['FILTER'] = tOne['set'] * 0 + 1
+    tTwo['FILTER'] = tTwo['set'] * 0 + 2
+    
+    tBoth = join(tOne, tTwo, join_type='outer')
+
+    tBoth.meta['file1'] = set1[:]
+    tBoth.meta['file2'] = set2[:]
+    
+    # it looks like the default behavior is to sort on the first
+    # column. Nice!
+    
+    tBoth.write(setOut, overwrite=True)
+    
