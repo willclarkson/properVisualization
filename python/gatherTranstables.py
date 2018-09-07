@@ -8,7 +8,7 @@ from astropy.table import Table, vstack, Column, join
 from astropy.io import fits
 import os
 import glob
-import numpy
+import numpy as np
 
 class Pointings(object):
 
@@ -211,3 +211,34 @@ def joinPointings(set1='pointings_f814w.fits', \
     
     tBoth.write(setOut, overwrite=True)
     
+def standardisePointings(pathIn='pointingsAll.fits', \
+                         pathOut='pointingsStan.fits'):
+
+    """Standardizes the pointings to the median vafactor"""
+
+    if not os.access(pathIn, os.R_OK):
+        print("standardisePointings WARN - cannot read path %s" \
+              % (pathIn))
+        return
+
+    tRaw = Table.read(pathIn)
+
+    medVF = np.median(tRaw['VAFACTOR'])
+
+    # create new columns
+    tRaw['ssRaw'] = 0.5*(tRaw['sX']+tRaw['sY'])
+    tRaw['ssScaled'] = tRaw['ssRaw']*1.0
+    
+    lFilters = np.unique(np.sort(tRaw['FILTER']))
+    for iFilt in lFilters:
+        bThis = tRaw['FILTER'] == iFilt
+
+        scaleThis = np.median(tRaw['VAFACTOR'][bThis] / \
+                              tRaw['ssRaw'][bThis])
+
+        tRaw.meta['mult%i' % (iFilt)] = np.float(scaleThis)
+
+        tRaw['ssScaled'][bThis] *= scaleThis
+        
+
+    tRaw.write(pathOut, overwrite=True)
