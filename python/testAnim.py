@@ -20,6 +20,7 @@ from matplotlib import colors
 
 import os, sys
 import subprocess
+import glob
 
 # 2018-09-09 - the backend save doesn't seem to work. Recurrent error
 # "I/O on closed file". So we try a different approach...
@@ -348,6 +349,309 @@ class Points(object):
             if os.access(sFrame, os.W_OK):
                 os.remove(sFrame)
 
+class SliderPlot(object):
+
+    """Plots timeseries with slider for visualization"""
+
+    def __init__(self, nGen=50, figNum=1, \
+                     labelX='MJD', \
+                     labelY='Scale factor', \
+                     figsz=(8,3), \
+                     nFrames = 100, \
+                     tMin=-1., tMax=-1., \
+                     tBuf = 50., \
+                     xMin = 1e6, \
+                     xMax = -1e6, \
+                     sliderLW = 4, \
+                     sliderColor='k',\
+                     sliderAlpha=0.25, \
+                     sliderZorder=10, \
+                     dirFrames='./tmpFramesSlider', \
+                     frameTyp='jpg', \
+                     hlSym='o', \
+                     hlSz=9, \
+                     hlColo='g', \
+                     scattColo='b', \
+                     scattSz=4, \
+                     scattAlpha = 0.6, \
+                     clumpInterval = 30., \
+                     clumpAlpha=0.25, \
+                     clumpColor='darkslateblue', \
+                     clumpLW=1):
+
+        # time, vertical data
+        self.t = np.array([])
+        self.x = np.array([])
+
+        # slider positions
+        self.nFrames = nFrames
+        self.tSlider = np.array([])
+        self.iData = -1
+
+        # slider plot parameters
+        self.sliderAlpha = sliderAlpha
+        self.sliderColor = sliderColor
+        self.sliderLW = sliderLW
+        self.sliderZorder = sliderZorder
+
+        # scatter plot parameters
+        self.scattColo = scattColo
+        self.scattSz = scattSz
+        self.scattAlpha = scattAlpha
+
+        # for plot limits
+        self.tMin = np.copy(tMin)
+        self.tMax = np.copy(tMax)
+        self.tBuf = np.copy(tBuf)
+
+        self.xMin = np.copy(xMin)
+        self.xMax = np.copy(xMax)
+
+        # for joining the dots between clumps
+        self.clumpInterval = clumpInterval
+        self.clumpAlpha = clumpAlpha
+        self.clumpColor = clumpColor
+        self.clumpLW = clumpLW
+
+        # figure
+        self.fig = None
+        self.figNum = figNum
+        self.ax = None
+        self.figSz = figsz
+
+        # some more frame parameters
+        self.dirFrames = dirFrames[:]
+        self.frameStem = 'slider'
+        self.frameTyp = frameTyp[:]
+        self.nZeros = -1
+        self.lFrames = []
+
+        # slider vertical values
+        self.ySlider = np.array([])
+
+        # highlight plot information
+        self.hlSym = hlSym
+        self.hlSz = hlSz
+        self.hlColo = hlColo
+
+        # plot objects to update
+        self.scatt = None
+        self.slider = None
+        self.hilite = None
+
+        self.labelX = labelX[:]
+        self.labelY = labelY[:]
+
+        # when generating data
+        self.nGen = nGen
+
+    def makePoints(self):
+
+        """For testing: makes fake data"""
+
+        tMin = 50000.
+        tMax = 51000.
+
+        self.t = np.random.uniform(size=self.nGen) * \
+            (tMax - tMin) + tMin
+        self.t = self.t[np.argsort(self.t)]
+        
+        self.x = np.random.normal(size=self.nGen)
+
+    def makeFigure(self):
+
+        """Makes the figure"""
+
+        self.setPlotLims()
+        xLimits = np.array([self.tMin, self.tMax])
+
+        # (copy from the above object)
+        yLimits = np.array([np.min(self.x)*0.95, np.max(self.x)*1.05])
+
+        self.fig = plt.figure(self.figNum)
+        self.fig.set_size_inches(self.figSz, forward=True)
+        self.fig.clf()
+        self.ax = self.fig.add_subplot(111, \
+                                           xlim=xLimits,\
+                                           ylim=yLimits)
+        
+        # ensure sufficient room at the bottom to fit the label
+        self.fig.subplots_adjust(bottom=0.2)
+
+        # label the axes right away
+        self.ax.set_xlabel(self.labelX)
+        self.ax.set_ylabel(self.labelY)
+
+    def setPlotLims(self):
+
+        """Sets the plot limits"""
+
+        if self.tMin < 0:
+            self.tMin = np.min(self.t) - self.tBuf
+        if self.tMax < 0:
+            self.tMax = np.max(self.t) + self.tBuf
+
+    def getPlotLims(self):
+
+        """Gets the (vertical) plot limits having plotted once"""
+
+        yLims = np.copy(self.ax.get_ylim())
+        self.xMin = np.copy(yLims[0])
+        self.xMax = np.copy(yLims[1])
+
+    def adjustVerticalLimits(self, factor=0.2):
+
+        """Can adjust vertical plot limits"""
+
+        yMed =  0.5*(self.xMax + self.xMin)
+        yDist = 0.5*(self.xMax - self.xMin)
+        
+        self.xMax = yMed + yDist * (1.0 + factor)
+        self.xMin = yMed - yDist * (1.0 + factor)
+        
+
+
+    def makeSliderTimes(self):
+
+        """Generates fine-grid of slider times"""
+
+        self.tSlider = np.linspace(self.tMin, self.tMax, \
+                                       self.nFrames, endpoint=True)
+
+    def scatterData(self):
+
+        """Adds the scatterplot for data to the frame"""
+
+        self.scatt = self.ax.scatter(self.t, self.x, zorder=5, \
+                                         c=self.scattColo, \
+                                         s=self.scattSz, \
+                                         alpha=self.scattAlpha)
+
+    def drawClumpLines(self):
+
+        """Draws lines connecting clumps"""
+
+        # partition the times into clumps
+        dt = self.t - np.roll(self.t, 1)
+        gFirstClump = np.where(dt > self.clumpInterval)[0]
+        gLastClump = np.roll(gFirstClump, 1)
+        gLastClump[0] = 0 
+
+        for iClump in range(np.size(gLastClump)):
+            iLo = gLastClump[iClump]
+            iHi = gFirstClump[iClump]
+
+            dum = self.ax.plot(self.t[iLo:iHi], \
+                                   self.x[iLo:iHi], \
+                                   color=self.clumpColor, \
+                                   alpha=self.clumpAlpha, \
+                                   lw=self.clumpLW)
+
+    def addSliderToPlot(self, iSlider=0):
+
+        """Add the slider to the plot"""
+
+        if np.size(self.ySlider) <> 2:
+            self.getPlotLims()
+            self.adjustVerticalLimits()
+            self.ax.set_ylim(self.xMin, self.xMax)
+            self.ySlider = np.array([self.xMin, self.xMax])
+
+        # times for the slider (as a vector so we can plot)
+        tSlider = self.tSlider[iSlider]*np.array([1., 1.])
+
+        # select the datapoint below the slider
+        bPos = self.t <= tSlider[0]
+        if np.sum(bPos) < 1:
+            self.iData = -1
+        else:
+            gPos = np.where(bPos)[0]
+            iMostRecent = np.argmin(tSlider[0] - self.t[gPos])
+            self.iData = gPos[iMostRecent]
+        
+        # now add the slider
+        if iSlider < 1:
+            self.slider,  = self.ax.plot(tSlider, self.ySlider, \
+                                             alpha=self.sliderAlpha, \
+                                             color=self.sliderColor, \
+                                             lw=self.sliderLW, \
+                                             zorder = self.sliderZorder)
+        else:
+            self.slider.set_data(tSlider, self.ySlider)
+
+    def hilightCurrentScatter(self):
+
+        """Highlights the current scatter object"""
+
+        # don't plot anything if we haven't got to a datapoint yet
+        if self.iData < 0:
+            return
+
+        tThis = self.t[self.iData]
+        xThis = self.x[self.iData]
+        if not self.hilite:
+            self.hilite,   = self.ax.plot(tThis, xThis, \
+                                              c=self.hlColo, \
+                                              ms=self.hlSz, \
+                                              marker=self.hlSym, \
+                                              ls='None', \
+                                              zorder=15)            
+            return
+
+        else:
+            self.hilite.set_data(tThis, xThis)
+
+    # some familiar stuff for filenames
+    def getNzeros(self):
+
+        """Sets the number of zeros for the frame filenames"""
+
+        self.nZeros = int(np.log10(self.nFrames)+1)
+
+    def makeIthFilename(self, i=0):
+
+        """Generates the i'th frame filename"""
+
+        if self.nZeros < 0:
+            self.getNzeros()
+
+        sIndex = str(i).zfill(self.nZeros)
+        
+        self.frameName = '%s_%s.%s' % (self.frameStem, sIndex,self.frameTyp)
+        self.framePath = '%s/%s' % (self.dirFrames, self.frameName)
+        self.lFrames.append(self.framePath)
+
+    def precleanFrames(self):
+
+        """Pre-cleans the frames"""
+
+        if not os.access(self.dirFrames, os.R_OK):
+            return
+
+        # don't remove from the current directory
+        if len(self.dirFrames) < 4:
+            return
+
+        lPre = glob.glob("%s/%s_*.%s" % \
+                             (self.dirFrames, self.frameStem, self.frameTyp))
+
+        if len(lPre) < 1:
+            return
+
+        for sPre in lPre:
+            if os.access(sPre, os.W_OK):
+                os.remove(sPre)
+
+    def writePlot(self):
+
+        """Writes the current plot to disk"""
+
+        if not os.access(self.dirFrames, os.R_OK):
+            os.makedirs(self.dirFrames)
+            
+        self.fig.savefig(self.framePath, quality=100)
+
+
 def TestAnim(nPts=1000, nFrames=200, tStep=0.5):
 
     PP = Points(nPts, tStep=tStep)
@@ -416,3 +720,28 @@ def TestFrameByFrame(nPts=10000, tStep=0.5, nFrames=200, framerate=50, \
     PP.wipeFrames()
 
 
+def TestSlider(nFrames=10):
+
+    """Test our slider method"""
+
+    SP = SliderPlot(nFrames=nFrames)
+    SP.makePoints()
+    
+    SP.makeFigure()
+    SP.scatterData()
+    SP.drawClumpLines()
+
+    SP.makeSliderTimes()
+    
+    # pre-clean the frames
+    SP.precleanFrames()
+
+    for iFrame in range(SP.nFrames):
+        SP.addSliderToPlot(iFrame)
+        SP.hilightCurrentScatter()
+        SP.makeIthFilename(iFrame)
+
+        sys.stdout.write("\r %s" % (SP.framePath))
+        sys.stdout.flush()
+
+        SP.writePlot()
