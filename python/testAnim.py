@@ -18,12 +18,30 @@ import matplotlib.pylab as plt
 import matplotlib.animation as animation
 from matplotlib import colors
 
+# for importing data
+from astropy.table import Table
+
+# for trend interpolation
+from scipy.interpolate import interp1d
+
+# for coordinates
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+
+# for importing the trend
+import cPickle as pickle
+
+# for drawing the convex hull around the objects
+import polyUtils as pu
+
 import os, sys
 import subprocess
 import glob
 
 # 2018-09-09 - the backend save doesn't seem to work. Recurrent error
 # "I/O on closed file". So we try a different approach...
+
+# 2018-09-15 - updated to use real data
 
 plt.ion()
 
@@ -47,7 +65,10 @@ class Points(object):
                      figSz=[6,6], \
                      doGrid=True, \
                      labelTimes=True, \
-                     fszLabel=20):
+                     fszLabel=20, \
+                     pathData='', \
+                     pathTrend='', \
+                     showHull=False):
 
         # timestep
         self.tStep = np.copy(tStep)
@@ -63,8 +84,22 @@ class Points(object):
         self.labelX = labelX[:]
         self.labelY = labelY[:]
 
+        # show convex hull?
+        self.showHull = showHull
+
         # do grid?
         self.doGrid = doGrid
+
+        # path for input data
+        self.pathData = pathData[:]
+        self.tData = Table()
+
+        # path for trends
+        self.pathTrend = pathTrend[:]
+        self.tTrend = Table()
+
+        # interpolation object for trend
+        self.fTrend = None
 
         # label the times?
         self.labelTimes = labelTimes
@@ -167,6 +202,118 @@ class Points(object):
         # add them together
         self.vX = linrX + randX
         self.vY = linrY + randY 
+
+    def loadData(self):
+
+        """Loads the data from file"""
+
+        if len(self.pathData) < 3:
+            return
+
+        if not os.access(self.pathData, os.R_OK):
+            print("Points.dataFrompath WARN - cannot read path %s" \
+                % (self.pathData))
+            return
+
+        self.tData = Table.read(self.pathData)
+        
+    def dataFromPath(self):
+
+        """Loads data and slots into the expected variables"""
+
+        self.loadData()
+        if len(self.tData) < 5:
+            return
+
+        # look for "good" objects
+        bGood = np.abs(self.tData['mul_SWEEPS'] ) < 50.
+
+        self.tData = self.tData[bGood]
+
+        ra = self.tData['RA']
+        de = self.tData['DEC']
+
+        # convert to galactics
+        c = SkyCoord(ra = np.asarray(ra)*u.deg, \
+                         dec=np.asarray(de)*u.deg, frame='fk5')
+        l = c.galactic.l.degree
+        b = c.galactic.b.degree
+
+        #self.xStart = self.tData['RA']
+        #self.yStart = self.tData['DEC']
+        self.xStart = np.copy(l)
+        self.yStart = np.copy(b)
+        self.vX = self.tData['mul_SWEEPS']
+        self.vY = self.tData['mub_SWEEPS']
+
+        self.labelX=r"Galactic longitude $l$, degrees"
+        self.labelY=r"Galactic latitude $b$, degrees"
+
+        # if we're using mas/yr, then we have a scale factor to apply
+        self.vX /= 3.6e7 # to convert from mas/yr to degrees per year
+        self.vY /= 3.6e7
+        
+        distCol = 'd_FromLoI'
+        if self.pathData.find('ich') > -1:
+            distCol = 'd_FromHiI'
+
+        self.dists = self.tData[distCol]
+
+        # limits
+        self.xMin = np.min(self.xStart)
+        self.xMax = np.max(self.xStart)
+        self.yMin = np.min(self.yStart)
+        self.yMax = np.max(self.yStart)
+
+        # some size limits for the plot
+        self.szMin=2
+        self.szMax=36
+        
+    def loadTrend(self):
+
+        """Load the trend data from disk"""
+
+        if len(self.pathTrend) < 3:
+            return
+
+        if not os.access(self.pathTrend, os.R_OK):
+            print("Points.trendFromData WARN - cannot read path %s" \
+                      % (self.pathTrend))
+            return
+
+        DDum = pickle.load(open(self.pathTrend, 'r'))
+        if self.pathData.find('ich') > -1:
+            self.tTrend = DDum['Metal-rich']
+        else:
+            self.tTrend = DDum['Metal-poor']
+                              
+    def replaceVelWithTrend(self):
+
+        """Finds the trend and replaces velocities with the trend values"""
+
+        lTrend = np.argsort(self.tTrend['dMod'])
+
+        if self.pathData.find('oor') > -1:
+            bVis = self.tTrend['dMod'][lTrend] < 1.0
+
+        self.fTrendL = interp1d(self.tTrend['dMod'][lTrend][bVis], \
+                                    self.tTrend['muL'][lTrend][bVis]/3.6e7, \
+                                    fill_value='extrapolate', \
+                                    kind='slinear')
+
+        self.fTrendB = interp1d(self.tTrend['dMod'][lTrend], \
+                                    self.tTrend['muB'][lTrend]/3.6e7, \
+                                    fill_value='extrapolate', \
+                                    kind='slinear')
+
+        self.vX = self.fTrendL(self.dists)
+        self.vY = self.fTrendB(self.dists)
+
+    def setHull(self):
+
+        """Sets the convex hull around the dataset"""
+
+        self.xHull, self.yHull = pu.GetHull(self.xStart, self.yStart)
 
     def makeTimes(self):
 
@@ -319,7 +466,7 @@ class Points(object):
 
         # updates the title
         if self.labelTimes:
-            self.ax.set_title('%.2f yr' % (self.times[i]), loc='right', \
+            self.ax.set_title('%i yr' % (self.times[i]), loc='right', \
                                   color=self.cScatt, \
                                   fontsize=self.fszLabel)
 
@@ -476,7 +623,7 @@ class SliderPlot(object):
                                            ylim=yLimits)
         
         # ensure sufficient room at the bottom to fit the label
-        self.fig.subplots_adjust(bottom=0.2)
+        self.fig.subplots_adjust(bottom=0.2, left=0.2)
 
         # label the axes right away
         self.ax.set_xlabel(self.labelX)
@@ -718,6 +865,88 @@ def TestFrameByFrame(nPts=10000, tStep=0.5, nFrames=200, framerate=50, \
     PP.movieFromFrames()
 
     PP.wipeFrames()
+
+def TestWithData(tStep=200.0, nFrames=200, framerate=50, \
+                     subwindow=True, plotColor='r', \
+                     pathData='TEST_bothDists_metalRich.fits', \
+                     dirFrames='TMP_MR_frames', distCol='dist_FromLoI', \
+                     useTrend=False, \
+                     showHull=True, MP=False, \
+                     dbgPlot=False):
+
+
+    """Tests building an animation from actual datapoints"""
+
+    # example:
+    #
+    # testAnim.TestWithData(nFrames=501, useTrend=True, tStep=1000., showHull=True, MP=False)
+
+    if MP:
+        pathData='TEST_bothDists_metalPoor.fits'
+        dirFrames='TMP_MP_frames'
+        plotColor='b'
+
+    PD = Points(nFrames, tStep=tStep, pathData = pathData, \
+                    dirFrames=dirFrames[:], \
+                    cScatt=plotColor, \
+                    pathTrend='rotnCurves_250pBin_1000trials.pickle')
+
+    PD.fszLabel = 16
+
+    PD.dataFromPath()
+
+    if useTrend:
+        PD.loadTrend()
+        PD.replaceVelWithTrend()
+
+    # let's try interpolation
+    if dbgPlot:
+        lTrend = np.argsort(PD.tTrend['dMod'])
+        interp = interp1d(PD.tTrend['dMod'][lTrend], \
+                              PD.tTrend['muL'][lTrend]/3.6e7, \
+                              fill_value='extrapolate',\
+                              kind='slinear')
+
+        fig2 = plt.figure(2)
+        fig2.clf()
+        ax2 = fig2.add_subplot(111)
+
+        dumScatt = ax2.scatter(PD.dists, PD.vX)
+        dumTrend = ax2.plot(PD.tTrend['dMod'], PD.tTrend['muL']/3.6e7, 'k-')
+    
+        dumEval = interp(PD.dists)
+        dum3 = ax2.plot(PD.dists, dumEval, 'k.', zorder=25)
+
+        print np.min(dumEval), np.max(dumEval)
+    
+        ax2.set_ylim(-3e-7, 3e-7)
+
+        return
+
+    PD.makeTimes()
+
+    # now try making and animating the figure
+    PD.makeFigure()
+    PD.plotFirstScatt()
+    PD.labelAxes()
+
+    PD.fig.subplots_adjust(bottom=0.18, left=0.15)
+
+    if showHull:
+        PD.setHull()
+        dumHull = PD.ax.plot(PD.xHull, PD.yHull, 'k-', lw=3, alpha=0.25, \
+                                 zorder=30)
+
+    for iFrm in range(PD.nSteps):
+        PD.makeIthFilename(iFrm)
+        sys.stdout.write("\r %s" % (PD.framePath))
+        sys.stdout.flush()
+
+        PD.updateScatterPos(iFrm, PD.fig, PD.scatt)
+        PD.writeFrame()
+        
+
+    PD.wipeFrames()
 
 
 def TestSlider(nFrames=10):
