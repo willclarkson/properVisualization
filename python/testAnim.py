@@ -485,7 +485,7 @@ class Points(object):
             #    (1.0 - distScal) * (self.alphaMax - self.alphaMin)
 
             alphas = self.alphaMin + \
-                (1.0-dDistCorr) * (self.alphaMax - self.alphaMin)
+                (dDistCorr) * (self.alphaMax - self.alphaMin)
 
             co[:,3] = alphas
 
@@ -1106,10 +1106,10 @@ def TestTwoPanels(nFrames=25, useTrend=True, tStep=500, showHull=True, \
                     pathTrend=pathTrend)
 
     # set a few plot items
-    PR.alphaMin = 0.4
-    PR.alphaMax = 0.7
-    PP.alphaMin = 0.3
-    PP.alphaMax = 0.6
+    PR.alphaMin = 0.3
+    PR.alphaMax = 0.6
+    PP.alphaMin = 0.2
+    PP.alphaMax = 0.5
     PR.distPctClip = 90.
     PP.distPctClip = 95.
 
