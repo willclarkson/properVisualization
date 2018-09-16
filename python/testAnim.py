@@ -38,7 +38,7 @@ import cPickle as pickle
 # for drawing the convex hull around the objects
 import polyUtils as pu
 
-import os, sys
+import os, sys, shutil
 import subprocess
 import glob
 
@@ -1072,14 +1072,22 @@ def TestWithData(tStep=200.0, nFrames=200, framerate=50, \
 
 
 def TestTwoPanels(nFrames=25, useTrend=True, tStep=500, showHull=True, \
-                      subWindow=False, dKpc=False, reverseX=True, \
-                      noTrend=False):
+                      subWindow=True, dKpc=False, reverseX=True, \
+                      noTrend=False, nPad=0):
 
     """Try making two panels. Example settings:
 
     subWindow=True, tStep = 1000
 
-    subWindow=False, tStep = 5000"""
+    subWindow=False, tStep = 5000
+
+    testAnim.TestTwoPanels(nFrames=251, subWindow=True, tStep=500, noTrend=True, nPad=100)
+
+    testAnim.TestTwoPanels(nFrames=251, subWindow=True, tStep=500)
+    """
+
+
+    # to be added - frame padding (can use the os for this)
 
     pathTrend=''
     dirFrames = 'testBoth_noTrend'
@@ -1194,6 +1202,17 @@ def TestTwoPanels(nFrames=25, useTrend=True, tStep=500, showHull=True, \
 
     for points in [PR, PP]:
         points.wipeFrames()
+
+    # if we're padding, make copies with incremented numbers
+    if nPad > 0:
+        frameLast = PR.lFrames[-1]
+        sLast = frameLast.split(PR.frameStem)[-1].split('_')[-1].split(PR.frameTyp)[0].split('.')[0]
+        iLast = int(sLast)
+
+        for iPad in range(nPad):
+            PR.makeIthFilename(iLast + iPad+1)
+            shutil.copy2(frameLast, PR.framePath)
+
 
 def TestSlider(nFrames=10):
 
