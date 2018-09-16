@@ -265,6 +265,12 @@ class Points(object):
         self.yMin = np.min(self.yStart)
         self.yMax = np.max(self.yStart)
 
+        # some hard limits for zoomed plot
+        self.xMin = 1.24
+        self.xMax = 1.27
+        self.yMin = -2.67
+        self.yMax = -2.64
+
         # some size limits for the plot
         self.szMin=2
         self.szMax=36
@@ -286,7 +292,17 @@ class Points(object):
             self.tTrend = DDum['Metal-rich']
         else:
             self.tTrend = DDum['Metal-poor']
-                              
+                 
+        # convert the trends into degrees per year
+        self.tTrend['muL'] /= 3.6e7
+        self.tTrend['muB'] /= 3.6e7
+             
+        # correct the midpoint offsets
+        if self.pathData.find('oor') > -1:
+            self.tTrend['muL'] += 0.5e-8
+        else:
+            self.tTrend['muL'] += 1.0e-8
+
     def replaceVelWithTrend(self):
 
         """Finds the trend and replaces velocities with the trend values"""
@@ -295,14 +311,17 @@ class Points(object):
 
         if self.pathData.find('oor') > -1:
             bVis = self.tTrend['dMod'][lTrend] < 1.0
+            self.tTrend['muL'] += 1.0e-8
+        else:
+            bVis = np.isfinite(self.tTrend['muL'])
 
         self.fTrendL = interp1d(self.tTrend['dMod'][lTrend][bVis], \
-                                    self.tTrend['muL'][lTrend][bVis]/3.6e7, \
+                                    self.tTrend['muL'][lTrend][bVis], \
                                     fill_value='extrapolate', \
                                     kind='slinear')
 
         self.fTrendB = interp1d(self.tTrend['dMod'][lTrend], \
-                                    self.tTrend['muB'][lTrend]/3.6e7, \
+                                    self.tTrend['muB'][lTrend], \
                                     fill_value='extrapolate', \
                                     kind='slinear')
 
@@ -895,15 +914,18 @@ def TestWithData(tStep=200.0, nFrames=200, framerate=50, \
 
     PD.dataFromPath()
 
+
     if useTrend:
         PD.loadTrend()
+        #if not dbgPlot:
+        #    
         PD.replaceVelWithTrend()
 
     # let's try interpolation
     if dbgPlot:
         lTrend = np.argsort(PD.tTrend['dMod'])
         interp = interp1d(PD.tTrend['dMod'][lTrend], \
-                              PD.tTrend['muL'][lTrend]/3.6e7, \
+                              PD.tTrend['muB'][lTrend], \
                               fill_value='extrapolate',\
                               kind='slinear')
 
@@ -911,8 +933,8 @@ def TestWithData(tStep=200.0, nFrames=200, framerate=50, \
         fig2.clf()
         ax2 = fig2.add_subplot(111)
 
-        dumScatt = ax2.scatter(PD.dists, PD.vX)
-        dumTrend = ax2.plot(PD.tTrend['dMod'], PD.tTrend['muL']/3.6e7, 'k-')
+        dumScatt = ax2.scatter(PD.dists, PD.vY)
+        dumTrend = ax2.plot(PD.tTrend['dMod'], PD.tTrend['muB'], 'k-')
     
         dumEval = interp(PD.dists)
         dum3 = ax2.plot(PD.dists, dumEval, 'k.', zorder=25)
