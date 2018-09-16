@@ -18,6 +18,10 @@ import matplotlib.pylab as plt
 import matplotlib.animation as animation
 from matplotlib import colors
 
+# for customizing gridlines
+from matplotlib.ticker import (MultipleLocator, FormatStrFormatter,
+                               AutoMinorLocator)
+
 # for importing data
 from astropy.table import Table
 
@@ -112,6 +116,12 @@ class Points(object):
 
         # plot color for scatter
         self.cScatt = cScatt[:]
+        self.titleLoc = 'right'
+        self.titleSz = fszLabel
+
+        # plot color for title - initialize to the same as the scatter
+        # color
+        self.cTitle = cScatt[:]
 
         # switch - are we doing this frame-by-frame?
         self.frameByFrame = frameByFrame
@@ -136,8 +146,11 @@ class Points(object):
         self.distEffects = distEffects
         self.szMin = 2.
         self.szMax = 49.
-        self.alphaMin = 0.2
-        self.alphaMax = 0.8
+        self.alphaMin = 0.3
+        self.alphaMax = 0.6
+
+        # distance clipping percentile
+        self.distPctClip = 100.
 
         # for data generation
         self.nObj = np.copy(nObj)
@@ -152,6 +165,12 @@ class Points(object):
         self.vYmax = +2.
         self.vXstd = 2.0
         self.vYstd = 0.5
+
+        # control variable to delegate limit-setting to methods
+        self.subWindow = False
+
+        # convert distances to ratios in kpc?
+        self.dKpc = False
 
         # distances (to generate fake rotation curve)
         self.dists = np.array([])
@@ -265,16 +284,25 @@ class Points(object):
         self.yMin = np.min(self.yStart)
         self.yMax = np.max(self.yStart)
 
-        # some hard limits for zoomed plot
-        self.xMin = 1.24
-        self.xMax = 1.27
-        self.yMin = -2.67
-        self.yMax = -2.64
-
         # some size limits for the plot
         self.szMin=2
-        self.szMax=36
-        
+        self.szMax=25
+
+        # some hard limits for zoomed plot
+        if self.subWindow:
+            self.xMin = 1.24
+            self.xMax = 1.27
+            self.yMin = -2.67
+            self.yMax = -2.64
+            self.szMin = 1
+            self.szMax = 36
+            #self.alphaMin = 0.1
+            #self.alphaMax = 0.9
+
+        if self.dKpc:
+            self.szMin=2
+            self.szMax=81
+
     def loadTrend(self):
 
         """Load the trend data from disk"""
@@ -334,6 +362,13 @@ class Points(object):
 
         self.xHull, self.yHull = pu.GetHull(self.xStart, self.yStart)
 
+    def plotHull(self):
+
+        """Plots the hull"""
+
+        dumHull = self.ax.plot(self.xHull, self.yHull, 'k-', lw=3, \
+                                   alpha=0.25, zorder=30)
+
     def makeTimes(self):
 
         """Generates the times"""
@@ -348,7 +383,14 @@ class Points(object):
         # NOTE - when working from data, will need to ensure
         # self.xMin, etc. are set from the data.
 
-        # what limits to use?
+        self.fig = plt.figure(self.figNum)
+        self.fig.set_size_inches(self.figSz, forward=True)
+        self.fig.clf()
+
+    def addAxis(self, subplot='111'):
+
+        """Adds the axis"""
+
         if np.size(self.xLims) < 2:
             xLimits = (self.xMin, self.xMax)
         else:
@@ -358,12 +400,9 @@ class Points(object):
             yLimits = (self.yMin, self.yMax)
         else:
             yLimits = np.copy(self.yLims)
-
         
-        self.fig = plt.figure(self.figNum)
-        self.fig.set_size_inches(self.figSz, forward=True)
-        self.fig.clf()
-        self.ax = self.fig.add_subplot(111, \
+
+        self.ax = self.fig.add_subplot(subplot, \
                                            xlim=xLimits,\
                                            ylim=yLimits)
 
@@ -375,11 +414,65 @@ class Points(object):
         sz = np.repeat(4., np.size(self.xStart))
         co = self.cScatt[:]
         if self.distEffects:
-            distRange = np.max(self.dists) - np.min(self.dists)
-            distMin = np.min(self.dists)
-            distScal = (self.dists - distMin) / distRange
+
+            distUse = np.copy(self.dists)
+            if self.dKpc:
+                distUse = 2.512**self.dists
+
+            # try clipping the range so that we emphasize the near-
+            # and far-sides of the distribution
+            distMin = np.min(distUse)
+            distRange = (np.max(distUse) - np.min(distUse))
+
+            # subtract off the median so that we can scale or clip the
+            # displayed range
+            distMed = np.median(distUse)
+            dDistScal = (distUse - distMed)/distRange
+
+            # now we clip
+            
+            # use percentages!
+            percLim = self.distPctClip
+            dLims = np.percentile(dDistScal, [100.-percLim, percLim])
+            
+            # do the clipping and rescale
+            dDistScal[dDistScal > dLims[-1]] = dLims[-1]
+            dDistScal[dDistScal < dLims[0]] = dLims[0]
+
+            newRange = np.max(dDistScal) - np.min(dDistScal)
+            dDistScal /= newRange
+            dDistCorr = dDistScal + distMed
+            dDistCorr -= np.min(dDistCorr)
+
+            #fracRange = 1.0 # default - no clipping
+            #dDistScal /= fracRange
+            ##dDistScal[dDistScal > 0.5] = 0.5
+            ##dDistScal[dDistScal < -0.5] = -0.5
+            
+            ## now we add the median back on
+            #dDistCorr = dDistScal + distMed
+            #dDistCorr -= np.min(dDistCorr)
+            ##print("INFO:", np.min(dDistCorr), np.max(dDistCorr))
+            
+            # finally, we REVERSE this because we want the biggest
+            # distance to correspond to the SMALLEST size (and want to
+            # use a consistent scheme for transparency below).
+            dDistCorr = 1.0 - dDistCorr
+
             szRange = self.szMax - self.szMin
-            sz = self.szMin + distScal * szRange
+            sz = self.szMin + dDistCorr * szRange
+
+
+            #distScal = (distUse - distMin) / distRange
+
+            #fracRange = 0.8
+            #bClipHi = distScal > fracRange
+            #distScal[bClipHi] = fracRange
+            #bClipLo = distScal < 1.0 - fracRange
+            #distScal[bClipLo] = 1.0 - fracRange
+
+            #szRange = self.szMax - self.szMin
+            #sz = self.szMin + distScal * szRange
 
             # try something similar with the colors
             rgba = colors.to_rgba(self.cScatt[:])
@@ -388,12 +481,16 @@ class Points(object):
                 co[:,iCol] = rgba[iCol]
 
             # now assign the alphas
-            alphas = self.alphaMax - \
-                (1.0 - distScal) * (self.alphaMax - self.alphaMin)
+            #alphas = self.alphaMax - \
+            #    (1.0 - distScal) * (self.alphaMax - self.alphaMin)
+
+            alphas = self.alphaMin + \
+                (1.0-dDistCorr) * (self.alphaMax - self.alphaMin)
+
             co[:,3] = alphas
 
 
-            print np.min(sz), np.max(sz)
+            #print np.min(sz), np.max(sz)
 
         self.scatt = self.ax.scatter(self.xStart, self.yStart, \
                                          c=co, \
@@ -485,9 +582,9 @@ class Points(object):
 
         # updates the title
         if self.labelTimes:
-            self.ax.set_title('%i yr' % (self.times[i]), loc='right', \
-                                  color=self.cScatt, \
-                                  fontsize=self.fszLabel)
+            self.ax.set_title('%i yr' % (self.times[i]), loc=self.titleLoc, \
+                                  color=self.cTitle, \
+                                  fontsize=self.titleSz)
 
 
         return [scatt]
@@ -827,6 +924,7 @@ def TestAnim(nPts=1000, nFrames=200, tStep=0.5):
 
     # now try making and animating the figure
     PP.makeFigure()
+    PP.addAxis()
     PP.plotFirstScatt()
     dum = PP.initScatterOffsets()
     
@@ -867,6 +965,7 @@ def TestFrameByFrame(nPts=10000, tStep=0.5, nFrames=200, framerate=50, \
 
     # now try making and animating the figure
     PP.makeFigure()
+    PP.addAxis()
     PP.plotFirstScatt()
     PP.labelAxes()
 
@@ -949,6 +1048,7 @@ def TestWithData(tStep=200.0, nFrames=200, framerate=50, \
 
     # now try making and animating the figure
     PD.makeFigure()
+    PD.addAxis()
     PD.plotFirstScatt()
     PD.labelAxes()
 
@@ -970,6 +1070,130 @@ def TestWithData(tStep=200.0, nFrames=200, framerate=50, \
 
     PD.wipeFrames()
 
+
+def TestTwoPanels(nFrames=25, useTrend=True, tStep=500, showHull=True, \
+                      subWindow=False, dKpc=False, reverseX=True, \
+                      noTrend=False):
+
+    """Try making two panels. Example settings:
+
+    subWindow=True, tStep = 1000
+
+    subWindow=False, tStep = 5000"""
+
+    pathTrend=''
+    dirFrames = 'testBoth_noTrend'
+    if not noTrend:
+        pathTrend='rotnCurves_250pBin_1000trials.pickle'
+        dirFrames = 'testBoth'
+
+    PP = Points(nFrames, tStep=tStep, cScatt='b', \
+                    pathData='TEST_bothDists_metalPoor.fits', \
+                    fszLabel=12, frameStem='tmpFramePoor', \
+                    pathTrend=pathTrend, labelTimes=False)
+
+    PR = Points(nFrames, tStep=tStep, cScatt='r', dirFrames=dirFrames[:], \
+                    pathData='TEST_bothDists_metalRich.fits', \
+                    fszLabel=12, frameStem='tmpFrameRich', \
+                    pathTrend=pathTrend)
+
+    # set a few plot items
+    PR.alphaMin = 0.4
+    PR.alphaMax = 0.7
+    PP.alphaMin = 0.3
+    PP.alphaMax = 0.6
+    PR.distPctClip = 90.
+    PP.distPctClip = 95.
+
+    # load the data in both, set up the trends
+    for points in [PP, PR]:
+        points.subWindow = subWindow
+        points.dKpc = dKpc
+
+        points.dataFromPath()
+        points.makeTimes()
+
+        if not noTrend:
+            points.loadTrend()
+            points.replaceVelWithTrend()
+
+    # no x-label for the top plot
+    PR.labelX=''
+
+    # OK now we set up the figure object for metal-rich, then use a
+    # reference to the figure object as the figure for the metal-poor
+    # object.
+    PR.figSz=(4.0,7.0)
+    PR.makeFigure()
+    PR.addAxis('211')
+
+    PP.fig = PR.fig
+    PP.addAxis('212')
+    
+    # OK now as we go through, we update both axes.
+    for points in [PR, PP]:
+        points.plotFirstScatt()
+        points.labelAxes()
+
+        if reverseX:
+            xLim = np.copy(points.ax.get_xlim())
+            points.ax.set_xlim(xLim[-1], xLim[0])
+
+        if showHull:
+            points.setHull()
+            points.plotHull()
+
+        # set the tick locator
+        majorLocL = MultipleLocator(0.01)
+        majorLocB = MultipleLocator(0.01)
+
+        points.ax.xaxis.set_major_locator(majorLocL)
+        points.ax.yaxis.set_major_locator(majorLocB)
+
+    # some special arguments for the top panel
+    PR.cTitle='k'
+    PR.titleSz = PR.fszLabel + 2
+    PR.titleloc='center'
+
+    # show the types
+    PR.ax.annotate('"Metal-rich"', (0.01, 1.01), \
+                       xycoords='axes fraction',\
+                       color=PR.cScatt, \
+                       fontsize=PR.fszLabel + 1, \
+                       ha='left', va='bottom')
+
+    PP.ax.annotate('"Metal-poor"', (0.01, 1.01), \
+                       xycoords='axes fraction',\
+                       color=PP.cScatt, \
+                       fontsize=PP.fszLabel + 1, \
+                       ha='left', va='bottom')
+
+
+    # some special arguments for the top panel
+    PR.cTitle='k'
+    PR.titleSz = PR.fszLabel + 2
+    PR.titleloc='center'
+
+    PR.fig.subplots_adjust(bottom=0.07, left=0.25, top=0.93, hspace=0.20)
+
+    # now step through BOTH panels:
+    for iFrm in range(PR.nSteps):
+        sys.stdout.write("\r %4i of %4i" % (iFrm, PR.nSteps))
+        sys.stdout.flush()
+        for points in [PR, PP]:
+            points.makeIthFilename(iFrm)
+            points.updateScatterPos(iFrm, points.fig, points.scatt)
+ 
+        if iFrm < 1:
+                # special title for the first frame
+            PR.ax.set_title('Present day', \
+                loc=PR.titleLoc, \
+                color=PR.cTitle, \
+                fontsize=PR.titleSz)
+        PR.writeFrame()
+
+    for points in [PR, PP]:
+        points.wipeFrames()
 
 def TestSlider(nFrames=10):
 
