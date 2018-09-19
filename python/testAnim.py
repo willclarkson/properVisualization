@@ -648,6 +648,9 @@ class SliderPlot(object):
         self.t = np.array([])
         self.x = np.array([])
 
+        # for HST application, may have special VAFACTOR keyword
+        self.VAFACTOR = np.array([])
+        
         # path for dataset
         self.pathData=pathData[:]
         self.tData = Table()
@@ -757,6 +760,10 @@ class SliderPlot(object):
         self.tBuf = 0.02
         #self.tMin = np.min(self.t)-0.2
         #self.tMax = np.max(self.t)+0.2
+
+        # do we have vafactor?
+        if 'VAFACTOR' in self.tData.colnames:
+            self.VAFACTOR = np.asarray(self.tData['VAFACTOR'][lSor])
         
     def makePoints(self):
 
@@ -1327,11 +1334,13 @@ def TestSliderScales(nFrames=0, showClumps=True, \
                      yScale=1e6, \
                      xMin=-1e6, \
                      xMax=-1e6, \
+                     xOffset=-90., \
                      doXdiffs=True, \
+                     doDivByVAFACTOR=False, \
                      labelX='MJD (days)', \
                      labelY='Scale factor', \
                      labelSz=18, \
-                     sTitl='Measured frame-to-frame scale factors', \
+                     sTitl='Measured frame-to-frame scale factors within the 2004 dataset', \
                      tMinWindo=53060.2, tMaxWindo = 53060.45, \
                      showVAFACTOR=True, \
                      figRoot='TEST'):
@@ -1356,10 +1365,15 @@ def TestSliderScales(nFrames=0, showClumps=True, \
     
     SP.loadData()
 
+                                       
+    if doDivByVAFACTOR:
+        SP.x /= SP.VAFACTOR
+    
     if doXdiffs:
         SP.x -= 1.0
-
+        
     SP.x *= yScale
+    SP.x += xOffset
     
     
     SP.makeFigure()
@@ -1389,7 +1403,7 @@ def TestSliderScales(nFrames=0, showClumps=True, \
         VA=SP.tData['VAFACTOR']
         SP.scatt._label = 'Measured'
         
-        scattPred = SP.ax.scatter(SP.t, (VA-1.0)*yScale, \
+        scattPred = SP.ax.scatter(SP.t, (VA-1.0)*yScale + xOffset, \
                    c='g', marker='^', \
                    s=16, label='DVA prediction', \
                    zorder=30, alpha=0.4)
@@ -1408,7 +1422,6 @@ def TestSliderScales(nFrames=0, showClumps=True, \
 
     dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
 
-    figRoot='TEST'
     if showVAFACTOR:
         figRoot = '%s_wVAFACTOR' % (figRoot[:])
 
@@ -1421,9 +1434,10 @@ def TestSliderScales(nFrames=0, showClumps=True, \
     # remove the frame indicator for the zoom
     dumFrame.remove()
 
-    SP.scatt._sizes *= 3
-    if showVAFACTOR:
-        scattPred._sizes *= 3
-    
     SP.ax.set_xlim(tMinWindo, tMaxWindo)
+    
+    SP.scatt._sizes *= 5
+    if showVAFACTOR:
+        scattPred._sizes *= 4
+        
     SP.fig.savefig('%s.png' % (figZoom))
