@@ -1387,11 +1387,12 @@ def TestSliderScales(nFrames=10, showClumps=True, \
     if showVAFACTOR:
         VA=SP.tData['VAFACTOR']
         SP.scatt._label = 'Measured'
-        SP.ax.plot(SP.t, (VA-1.0)*yScale, \
-                   color='g', marker='^', \
-                   ms=7, label='DVA prediction', \
-                   ls='None', zorder=30, alpha=0.4)
-
+        
+        scattPred = SP.ax.scatter(SP.t, (VA-1.0)*yScale, \
+                   c='g', marker='^', \
+                   s=16, label='DVA prediction', \
+                   zorder=30, alpha=0.4)
+        
         leg = SP.ax.legend(loc=0)
         
     # draw the indicator on the main panel and save
@@ -1413,6 +1414,7 @@ def TestSliderScales(nFrames=10, showClumps=True, \
     dumFrame.remove()
 
     SP.scatt._sizes *= 3
+    scattPred._sizes *= 3
     
     SP.ax.set_xlim(tMinWindo, tMaxWindo)
     SP.fig.savefig('TEST_zoom.png')
