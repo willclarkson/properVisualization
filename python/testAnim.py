@@ -1321,7 +1321,7 @@ def TestSlider(nFrames=10):
         SP.writePlot()
 
 
-def TestSliderScales(nFrames=10, showClumps=True, \
+def TestSliderScales(nFrames=0, showClumps=True, \
                      clumpInterval=40./1440., \
                      figSz=(16,6), \
                      yScale=1e6, \
@@ -1330,10 +1330,11 @@ def TestSliderScales(nFrames=10, showClumps=True, \
                      doXdiffs=True, \
                      labelX='MJD (days)', \
                      labelY='Scale factor', \
-                     labelSz=16, \
+                     labelSz=18, \
                      sTitl='Measured frame-to-frame scale factors', \
-                     tMinWindo=53060.2, tMaxWindo = 53060.5, \
-                     showVAFACTOR=True):
+                     tMinWindo=53060.2, tMaxWindo = 53060.45, \
+                     showVAFACTOR=True, \
+                     figRoot='TEST'):
 
     """Tests slider on scale telemetry"""
 
@@ -1407,14 +1408,22 @@ def TestSliderScales(nFrames=10, showClumps=True, \
 
     dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
 
-    SP.fig.savefig('TEST_fullframe.png')
+    figRoot='TEST'
+    if showVAFACTOR:
+        figRoot = '%s_wVAFACTOR' % (figRoot[:])
+
+
+    figZoom = '%s_zoom' % (figRoot)
+        
+    SP.fig.savefig('%s.png' % (figRoot))
 
 
     # remove the frame indicator for the zoom
     dumFrame.remove()
 
     SP.scatt._sizes *= 3
-    scattPred._sizes *= 3
+    if showVAFACTOR:
+        scattPred._sizes *= 3
     
     SP.ax.set_xlim(tMinWindo, tMaxWindo)
-    SP.fig.savefig('TEST_zoom.png')
+    SP.fig.savefig('%s.png' % (figZoom))
