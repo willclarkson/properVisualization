@@ -28,6 +28,11 @@ from astropy.table import Table
 # for trend interpolation
 from scipy.interpolate import interp1d
 
+# for the subimage
+from astropy.io import fits
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from mpl_toolkits.axes_grid1.colorbar import colorbar
+
 # for coordinates
 from astropy.coordinates import SkyCoord
 from astropy import units as u
@@ -626,6 +631,8 @@ class SliderPlot(object):
                      tBuf = 50., \
                      xMin = -1e6, \
                      xMax = -1e6, \
+                 tMinSlider=-1e-6,\
+                 tMaxSlider=-1e-6,\
                      sliderLW = 4, \
                      sliderColor='k',\
                      sliderAlpha=0.25, \
@@ -642,7 +649,10 @@ class SliderPlot(object):
                      clumpAlpha=0.25, \
                      clumpColor='darkslateblue', \
                      clumpLW=1, \
-                 pathData=''):
+                 pathData='', \
+                 dirSubim='./pertPSFs', \
+                 tailSubim='_flc_LOG.perts.fits', \
+                 subimFilter=1):
 
         # time, vertical data
         self.t = np.array([])
@@ -668,6 +678,14 @@ class SliderPlot(object):
         self.sliderLW = sliderLW
         self.sliderZorder = sliderZorder
 
+        # for inset images
+        self.dirSubim = dirSubim[:]
+        self.tailSubim = tailSubim[:]
+        self.pathSubim = ''
+        self.subim = np.array([])
+        self.subimFilter = subimFilter
+        self.axInset = None
+        
         # scatter plot parameters
         self.scattColo = scattColo
         self.scattSz = scattSz
@@ -677,10 +695,13 @@ class SliderPlot(object):
         self.tMin = np.copy(tMin)
         self.tMax = np.copy(tMax)
         self.tBuf = np.copy(tBuf)
-
         self.xMin = np.copy(xMin)
         self.xMax = np.copy(xMax)
 
+        # when do we want to start the slider?
+        self.tMinSlider = tMinSlider
+        self.tMaxSlider = tMaxSlider
+        
         # for joining the dots between clumps
         self.clumpInterval = clumpInterval
         self.clumpAlpha = clumpAlpha
@@ -845,9 +866,19 @@ class SliderPlot(object):
 
         """Generates fine-grid of slider times"""
 
-        self.tSlider = np.linspace(self.tMin, self.tMax, \
-                                       self.nFrames, endpoint=True)
+        if self.tMinSlider < 0:
+            self.tMinSlider = np.copy(self.tMin)
 
+        if self.tMaxSlider < 0:
+            self.tMaxSlider = np.copy(self.tMax)
+            
+        self.tSlider = np.linspace(self.tMinSlider, \
+                                   self.tMaxSlider, \
+                                   self.nFrames, endpoint=True)
+
+
+        print("INFO: slider times:", np.min(self.tSlider), np.max(self.tSlider))
+        
     def scatterData(self):
 
         """Adds the scatterplot for data to the frame"""
@@ -915,6 +946,94 @@ class SliderPlot(object):
         else:
             self.slider.set_data(tSlider, self.ySlider)
 
+    def getSubimgPath(self):
+
+        """Finds the path to the image for our inset if we're doing one"""
+
+        if not 'stem' in self.tData.colnames:
+            return
+
+        stem = self.tData['stem'][self.iData]
+        self.pathSubim = '%s/%s%s' % (self.dirSubim, stem, self.tailSubim)
+
+    def loadSubim(self):
+
+        """Loads the sub-image from disk"""
+
+        if not os.access(self.pathSubim, os.R_OK):
+            return
+        
+        self.subim = fits.getdata(self.pathSubim)
+
+    def trimSubim(self):
+
+        """Trims the sub-image following a simple heuristic"""
+
+        shSubim = np.shape(self.subim)
+        sz = shSubim[0]-2
+
+        self.subim = self.subim[1:sz, 1:sz]
+
+    def setupSubim(self):
+
+        """Sets up the subimage axes"""
+
+        self.axInset = inset_axes(self.ax, \
+                                  width="40%", height="60%", loc=4)
+
+
+        sTitle = 'Perturbation ePSF'
+        if self.subimFilter > 0:
+            lFilts = ['', 'F814W', 'F606W']
+            if self.subimFilter < len(lFilts):
+                sTitle = '%s (%s)' % (sTitle, lFilts[self.subimFilter])
+        self.axInset.set_title(sTitle, size=self.labelSz-4)
+
+        # hide the ticks - this is an image
+        self.axInset.get_xaxis().set_ticks([])
+        self.axInset.get_yaxis().set_ticks([])
+
+    def showSubim(self):
+
+        """Shows the subimage"""
+
+        # We might select only one of the filters
+        if self.subimFilter > 0:
+            if self.tData['FILTER'][self.iData] <> self.subimFilter:
+                return
+
+        if not self.axInset:
+            self.setupSubim()
+
+        # hilight here.
+        self.hilightCurrentScatter()
+
+        # dynamic scaling
+        vmin = -5.0e-3
+        vmax =  5.0e-3
+        if self.t[self.iData] - np.min(self.t) > 2.0:
+            vmin = -1.0e-3
+            vmax =  1.0e-3
+        
+        dum = self.axInset.imshow(self.subim, origin='lower', \
+                                  cmap='gray', interpolation='nearest', \
+                                  vmin=vmin, vmax=vmax)
+
+        try:
+            self.cax.remove()
+        except:
+            notAlreadyHere = True
+            
+        # add colorbar
+        self.cax = inset_axes(self.axInset,
+                              width="5%",  # width = 10% of parent_bbox width
+                              height="100%",  # height : 50%
+                              loc=3,
+                              bbox_to_anchor=(1.05, 0., 1, 1),
+                              bbox_transform=self.axInset.transAxes,
+                              borderpad=0)
+        colorbar(dum, cax=self.cax)
+        
     def hilightCurrentScatter(self):
 
         """Highlights the current scatter object"""
@@ -963,10 +1082,18 @@ class SliderPlot(object):
 
         for iFrame in range(self.nFrames):
             self.addSliderToPlot(iFrame)
-            self.hilightCurrentScatter()
+            #self.hilightCurrentScatter()
             self.makeIthFilename(iFrame)
             
             sys.stdout.write("\r %s" % (self.framePath))
+            sys.stdout.flush()
+
+            self.getSubimgPath()
+            self.loadSubim()
+            self.trimSubim()
+            self.showSubim()
+            # print np.shape(self.subim)
+            #sys.stdout.write("\r %s" % (self.pathSubim))
             sys.stdout.flush()
 
             self.writePlot()
@@ -1343,10 +1470,18 @@ def TestSliderScales(nFrames=0, showClumps=True, \
                      sTitl='Measured frame-to-frame scale factors within the 2004 dataset', \
                      tMinWindo=53060.2, tMaxWindo = 53060.45, \
                      showVAFACTOR=True, \
-                     figRoot='TEST'):
+                     figRoot='TEST', \
+                     filterSho=1, \
+                     dirFrames='tmp_frames', \
+                     tMinSlider=53060., \
+                     tMaxSlider=53063):
 
     """Tests slider on scale telemetry"""
 
+    # Example for VAFACTOR-divided example
+    #
+    # testAnim.TestSliderScales(doDivByVAFACTOR=True, figRoot='TEST_byVF', xOffset=0., showVAFACTOR=False)
+    
     sLabelY = labelY[:]
     if doXdiffs:
         sLabelY = '(%s - 1)' % (sLabelY)
@@ -1357,11 +1492,14 @@ def TestSliderScales(nFrames=0, showClumps=True, \
         
     SP = SliderPlot(nFrames=nFrames, pathData='pointingsStan.fits', \
                     clumpInterval = clumpInterval, \
-                    dirFrames='tmp_DVA', figsz=figSz, \
+                    dirFrames=dirFrames, figsz=figSz, \
                     xMin=xMin, xMax=xMax, \
                     labelX=labelX,\
                     labelY=sLabelY, \
-                    labelSz=labelSz)
+                    labelSz=labelSz, \
+                    subimFilter=filterSho, \
+                    tMinSlider=tMinSlider, \
+                    tMaxSlider=tMaxSlider)
     
     SP.loadData()
 
@@ -1387,6 +1525,19 @@ def TestSliderScales(nFrames=0, showClumps=True, \
     SP.ax.tick_params(axis = 'both', which = 'major', labelsize = labelSz-2)
     SP.ax.grid(which='both', visible=True, alpha=0.25)
     SP.ax.set_title(sTitl, size=labelSz)
+
+    # draw the indicator on the main panel
+    xLims = SP.ax.get_ylim()
+    #xRange = np.max(SP.x) - np.min(SP.x)
+    xRange = xLims[1] - xLims[0]
+    xLo = xLims[0] + 0.05*xRange
+    xHi = xLims[1] - 0.05*xRange
+
+    polT = np.array([tMinWindo, tMaxWindo, tMaxWindo, tMinWindo, tMinWindo])
+    polX = np.array([xLo, xLo, xHi, xHi, xLo])
+
+    dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
+
     
     # pre-clean the frames
     SP.precleanFrames()
@@ -1410,17 +1561,17 @@ def TestSliderScales(nFrames=0, showClumps=True, \
         
         leg = SP.ax.legend(loc=0)
         
-    # draw the indicator on the main panel and save
-    xLims = SP.ax.get_ylim()
-    #xRange = np.max(SP.x) - np.min(SP.x)
-    xRange = xLims[1] - xLims[0]
-    xLo = xLims[0] + 0.05*xRange
-    xHi = xLims[1] - 0.05*xRange
+    ## draw the indicator on the main panel and save
+    #xLims = SP.ax.get_ylim()
+    ##xRange = np.max(SP.x) - np.min(SP.x)
+    #xRange = xLims[1] - xLims[0]
+    #xLo = xLims[0] + 0.05*xRange
+    #xHi = xLims[1] - 0.05*xRange
 
-    polT = np.array([tMinWindo, tMaxWindo, tMaxWindo, tMinWindo, tMinWindo])
-    polX = np.array([xLo, xLo, xHi, xHi, xLo])
+    #polT = np.array([tMinWindo, tMaxWindo, tMaxWindo, tMinWindo, tMinWindo])
+    #polX = np.array([xLo, xLo, xHi, xHi, xLo])
 
-    dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
+    #dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
 
     if showVAFACTOR:
         figRoot = '%s_wVAFACTOR' % (figRoot[:])
@@ -1433,11 +1584,26 @@ def TestSliderScales(nFrames=0, showClumps=True, \
 
     # remove the frame indicator for the zoom
     dumFrame.remove()
-
+    SP.axInset.remove()
+    try:
+        SP.cax.remove()
+    except:
+        noColorbar=True
+        
     SP.ax.set_xlim(tMinWindo, tMaxWindo)
+
+    if doDivByVAFACTOR:
+        bThis = (SP.t >= tMinWindo) & (SP.t < tMaxWindo)
+        xHi = np.max(SP.x[bThis])
+        xLo = np.min(SP.x[bThis])
+
+        SP.ax.set_ylim(-1, 1)
+                     
     
     SP.scatt._sizes *= 5
     if showVAFACTOR:
         scattPred._sizes *= 4
         
     SP.fig.savefig('%s.png' % (figZoom))
+
+    print SP.tData['FILTER']
