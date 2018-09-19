@@ -619,11 +619,12 @@ class SliderPlot(object):
     def __init__(self, nGen=50, figNum=1, \
                      labelX='MJD', \
                      labelY='Scale factor', \
-                     figsz=(8,3), \
+                 labelSz=14, \
+                 figsz=(8,3), \
                      nFrames = 100, \
                      tMin=-1., tMax=-1., \
                      tBuf = 50., \
-                     xMin = 1e6, \
+                     xMin = -1e6, \
                      xMax = -1e6, \
                      sliderLW = 4, \
                      sliderColor='k',\
@@ -640,12 +641,19 @@ class SliderPlot(object):
                      clumpInterval = 30., \
                      clumpAlpha=0.25, \
                      clumpColor='darkslateblue', \
-                     clumpLW=1):
+                     clumpLW=1, \
+                 pathData=''):
 
         # time, vertical data
         self.t = np.array([])
         self.x = np.array([])
 
+        # path for dataset
+        self.pathData=pathData[:]
+        self.tData = Table()
+        self.colT = 'MJD'
+        self.colX = 'ssScaled'
+        
         # slider positions
         self.nFrames = nFrames
         self.tSlider = np.array([])
@@ -704,10 +712,52 @@ class SliderPlot(object):
 
         self.labelX = labelX[:]
         self.labelY = labelY[:]
-
+        self.labelSz = labelSz
+        
         # when generating data
         self.nGen = nGen
 
+    def loadData(self):
+
+        """Loads the data to use for points"""
+
+        if len(self.pathData) < 3:
+            print("SliderPlot.loadData WARN: pathData too short. Not loading.")
+            return
+
+        if not os.access(self.pathData, os.R_OK):
+            print("SliderPlot.loadData WARN: cannot read path %s" \
+                  % (self.pathData))
+            return
+
+        self.tData = Table.read(self.pathData)
+
+        # only pass the columns to the instance if they are actually
+        # present in the table.
+        hasT = self.colT in self.tData.colnames
+        hasX = self.colX in self.tData.colnames
+        if not hasT:
+            print("SliderPlot.loadData WARN - time column %s not found in %s)" \
+                  % (self.colT, self.pathData))
+
+        if not hasX:
+            print("SliderPlot.loadData WARN - vertical column %s not found in %s)" \
+                  % (self.colX, self.pathData))
+
+        if not hasT or not hasX:
+            return
+
+        tRaw = np.asarray(self.tData[self.colT])
+        xRaw = np.asarray(self.tData[self.colX])
+
+        lSor = np.argsort(tRaw)
+        self.t = tRaw[lSor]
+        self.x = xRaw[lSor]
+
+        self.tBuf = 0.02
+        #self.tMin = np.min(self.t)-0.2
+        #self.tMax = np.max(self.t)+0.2
+        
     def makePoints(self):
 
         """For testing: makes fake data"""
@@ -721,7 +771,7 @@ class SliderPlot(object):
         
         self.x = np.random.normal(size=self.nGen)
 
-    def makeFigure(self):
+    def makeFigure(self, scaleLimY = 1.0):
 
         """Makes the figure"""
 
@@ -729,8 +779,13 @@ class SliderPlot(object):
         xLimits = np.array([self.tMin, self.tMax])
 
         # (copy from the above object)
-        yLimits = np.array([np.min(self.x)*0.95, np.max(self.x)*1.05])
+        #yLimits = np.array([np.min(self.x), np.max(self.x)]) * \
+        #          np.array([scaleLimY, 1.0/scaleLimY])
 
+        yLimits = np.array([self.xMin, self.xMax])
+        
+        print("makeFigure INFO:", xLimits, yLimits)
+        
         self.fig = plt.figure(self.figNum)
         self.fig.set_size_inches(self.figSz, forward=True)
         self.fig.clf()
@@ -742,8 +797,8 @@ class SliderPlot(object):
         self.fig.subplots_adjust(bottom=0.2, left=0.2)
 
         # label the axes right away
-        self.ax.set_xlabel(self.labelX)
-        self.ax.set_ylabel(self.labelY)
+        self.ax.set_xlabel(self.labelX, size=self.labelSz)
+        self.ax.set_ylabel(self.labelY, size=self.labelSz)
 
     def setPlotLims(self):
 
@@ -754,6 +809,11 @@ class SliderPlot(object):
         if self.tMax < 0:
             self.tMax = np.max(self.t) + self.tBuf
 
+        if self.xMin < 0:
+            self.xMin = np.min(self.x)
+        if self.xMax < 0:
+            self.xMax = np.max(self.x)
+            
     def getPlotLims(self):
 
         """Gets the (vertical) plot limits having plotted once"""
@@ -794,10 +854,16 @@ class SliderPlot(object):
 
         """Draws lines connecting clumps"""
 
+        #print("drawClumpLines INFO", np.shape(self.t), np.min(self.t), np.max(self.t))
+        
         # partition the times into clumps
         dt = self.t - np.roll(self.t, 1)
         gFirstClump = np.where(dt > self.clumpInterval)[0]
         gLastClump = np.roll(gFirstClump, 1)
+
+        #print("drawClumpLines INFO", np.shape(dt), np.min(dt), np.max(dt), np.shape(gFirstClump), np.shape(gLastClump))
+
+        
         gLastClump[0] = 0 
 
         for iClump in range(np.size(gLastClump)):
@@ -816,7 +882,7 @@ class SliderPlot(object):
 
         if np.size(self.ySlider) <> 2:
             self.getPlotLims()
-            self.adjustVerticalLimits()
+            # self.adjustVerticalLimits(0.0) # no adjustment
             self.ax.set_ylim(self.xMin, self.xMax)
             self.ySlider = np.array([self.xMin, self.xMax])
 
@@ -883,6 +949,20 @@ class SliderPlot(object):
         self.frameName = '%s_%s.%s' % (self.frameStem, sIndex,self.frameTyp)
         self.framePath = '%s/%s' % (self.dirFrames, self.frameName)
         self.lFrames.append(self.framePath)
+
+    def wrapMakeFrames(self):
+
+        """Wrapper - make the required frames"""
+
+        for iFrame in range(self.nFrames):
+            self.addSliderToPlot(iFrame)
+            self.hilightCurrentScatter()
+            self.makeIthFilename(iFrame)
+            
+            sys.stdout.write("\r %s" % (self.framePath))
+            sys.stdout.flush()
+
+            self.writePlot()
 
     def precleanFrames(self):
 
@@ -1239,3 +1319,100 @@ def TestSlider(nFrames=10):
         sys.stdout.flush()
 
         SP.writePlot()
+
+
+def TestSliderScales(nFrames=10, showClumps=True, \
+                     clumpInterval=40./1440., \
+                     figSz=(16,6), \
+                     yScale=1e6, \
+                     xMin=-1e6, \
+                     xMax=-1e6, \
+                     doXdiffs=True, \
+                     labelX='MJD (days)', \
+                     labelY='Scale factor', \
+                     labelSz=16, \
+                     sTitl='Measured frame-to-frame scale factors', \
+                     tMinWindo=53060.2, tMaxWindo = 53060.5, \
+                     showVAFACTOR=True):
+
+    """Tests slider on scale telemetry"""
+
+    sLabelY = labelY[:]
+    if doXdiffs:
+        sLabelY = '(%s - 1)' % (sLabelY)
+
+    if yScale > 1:
+        sLabelY = r'%s $\times %.1e$' % (sLabelY, yScale)
+    
+        
+    SP = SliderPlot(nFrames=nFrames, pathData='pointingsStan.fits', \
+                    clumpInterval = clumpInterval, \
+                    dirFrames='tmp_DVA', figsz=figSz, \
+                    xMin=xMin, xMax=xMax, \
+                    labelX=labelX,\
+                    labelY=sLabelY, \
+                    labelSz=labelSz)
+    
+    SP.loadData()
+
+    if doXdiffs:
+        SP.x -= 1.0
+
+    SP.x *= yScale
+    
+    
+    SP.makeFigure()
+    SP.scatterData()
+    if showClumps:
+        SP.drawClumpLines()
+    SP.makeSliderTimes()
+
+    # Figsize adjustment for PC
+    SP.fig.subplots_adjust(left=0.1, right=0.95)
+    SP.ax.tick_params(axis = 'both', which = 'major', labelsize = labelSz-2)
+    SP.ax.grid(which='both', visible=True, alpha=0.25)
+    SP.ax.set_title(sTitl, size=labelSz)
+    
+    # pre-clean the frames
+    SP.precleanFrames()
+
+    # make the frames
+    SP.wrapMakeFrames()
+
+    # if we asked for a sub-window, zoom in to the subwindow and save
+    # this as a second figure.
+    if tMinWindo < np.min(SP.t):
+        return
+
+    if showVAFACTOR:
+        VA=SP.tData['VAFACTOR']
+        SP.scatt._label = 'Measured'
+        SP.ax.plot(SP.t, (VA-1.0)*yScale, \
+                   color='g', marker='^', \
+                   ms=7, label='DVA prediction', \
+                   ls='None', zorder=30, alpha=0.4)
+
+        leg = SP.ax.legend(loc=0)
+        
+    # draw the indicator on the main panel and save
+    xLims = SP.ax.get_ylim()
+    #xRange = np.max(SP.x) - np.min(SP.x)
+    xRange = xLims[1] - xLims[0]
+    xLo = xLims[0] + 0.05*xRange
+    xHi = xLims[1] - 0.05*xRange
+
+    polT = np.array([tMinWindo, tMaxWindo, tMaxWindo, tMinWindo, tMinWindo])
+    polX = np.array([xLo, xLo, xHi, xHi, xLo])
+
+    dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
+
+    SP.fig.savefig('TEST_fullframe.png')
+
+
+    # remove the frame indicator for the zoom
+    dumFrame.remove()
+
+    SP.scatt._sizes *= 3
+    
+    SP.ax.set_xlim(tMinWindo, tMaxWindo)
+    SP.fig.savefig('TEST_zoom.png')
