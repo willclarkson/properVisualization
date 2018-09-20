@@ -652,7 +652,8 @@ class SliderPlot(object):
                  pathData='', \
                  dirSubim='./pertPSFs', \
                  tailSubim='_flc_LOG.perts.fits', \
-                 subimFilter=1):
+                 subimFilter=1, \
+                 doSubim=True):
 
         # time, vertical data
         self.t = np.array([])
@@ -685,12 +686,14 @@ class SliderPlot(object):
         self.subim = np.array([])
         self.subimFilter = subimFilter
         self.axInset = None
+        self.doSubim = doSubim
         
         # scatter plot parameters
         self.scattColo = scattColo
         self.scattSz = scattSz
         self.scattAlpha = scattAlpha
-
+        self.scattEdge = 'k'
+        
         # for plot limits
         self.tMin = np.copy(tMin)
         self.tMax = np.copy(tMax)
@@ -877,7 +880,6 @@ class SliderPlot(object):
                                    self.nFrames, endpoint=True)
 
 
-        print("INFO: slider times:", np.min(self.tSlider), np.max(self.tSlider))
         
     def scatterData(self):
 
@@ -886,7 +888,8 @@ class SliderPlot(object):
         self.scatt = self.ax.scatter(self.t, self.x, zorder=5, \
                                          c=self.scattColo, \
                                          s=self.scattSz, \
-                                         alpha=self.scattAlpha)
+                                         alpha=self.scattAlpha, \
+                                     edgecolor=self.scattEdge)
 
     def drawClumpLines(self):
 
@@ -1011,7 +1014,7 @@ class SliderPlot(object):
         # dynamic scaling
         vmin = -5.0e-3
         vmax =  5.0e-3
-        if self.t[self.iData] - np.min(self.t) > 2.0:
+        if self.t[self.iData] - np.min(self.t) > 1.2:
             vmin = -1.0e-3
             vmax =  1.0e-3
         
@@ -1088,10 +1091,11 @@ class SliderPlot(object):
             sys.stdout.write("\r %s" % (self.framePath))
             sys.stdout.flush()
 
-            self.getSubimgPath()
-            self.loadSubim()
-            self.trimSubim()
-            self.showSubim()
+            if self.doSubim:
+                self.getSubimgPath()
+                self.loadSubim()
+                self.trimSubim()
+                self.showSubim()
             # print np.shape(self.subim)
             #sys.stdout.write("\r %s" % (self.pathSubim))
             sys.stdout.flush()
@@ -1474,13 +1478,19 @@ def TestSliderScales(nFrames=0, showClumps=True, \
                      filterSho=1, \
                      dirFrames='tmp_frames', \
                      tMinSlider=53060., \
-                     tMaxSlider=53063):
+                     tMaxSlider=53063, \
+                     useDark=False, \
+                     doSubim=True, \
+                     standardizeTimes=True):
 
     """Tests slider on scale telemetry"""
 
     # Example for VAFACTOR-divided example
     #
     # testAnim.TestSliderScales(doDivByVAFACTOR=True, figRoot='TEST_byVF', xOffset=0., showVAFACTOR=False)
+
+    if useDark:
+        plt.style.use('dark_background')
     
     sLabelY = labelY[:]
     if doXdiffs:
@@ -1499,11 +1509,38 @@ def TestSliderScales(nFrames=0, showClumps=True, \
                     labelSz=labelSz, \
                     subimFilter=filterSho, \
                     tMinSlider=tMinSlider, \
-                    tMaxSlider=tMaxSlider)
+                    tMaxSlider=tMaxSlider,
+                    doSubim=doSubim)
     
     SP.loadData()
 
-                                       
+    if standardizeTimes:
+        tFirst = np.min(SP.t)
+        SP.t -= tFirst
+        SP.tMinSlider -= tFirst
+        SP.tMaxSlider -= tFirst
+        SP.tMin -= tFirst
+        SP.tMax -= tFirst
+        tMinWindo -= tFirst
+        tMaxWindo -= tFirst
+        
+    cWindo = '0.25'
+    cPred = 'g'
+    cGrid = '0.25'
+    alphaPred = 0.4
+    if useDark:
+        SP.hlColo = 'c'
+        SP.scattColo='lightsteelblue'
+        SP.scattEdge='steelblue'
+        SP.clumpColor='steelblue'
+        SP.clumpAlpha=0.5
+        cPred='y'
+        SP.sliderColor='w'
+        cWindo='0.8'
+        cGrid = '0.85'
+        alphaPred = 1.0
+        SP.scattAlpha=1.0
+        
     if doDivByVAFACTOR:
         SP.x /= SP.VAFACTOR
     
@@ -1523,7 +1560,7 @@ def TestSliderScales(nFrames=0, showClumps=True, \
     # Figsize adjustment for PC
     SP.fig.subplots_adjust(left=0.1, right=0.95)
     SP.ax.tick_params(axis = 'both', which = 'major', labelsize = labelSz-2)
-    SP.ax.grid(which='both', visible=True, alpha=0.25)
+    SP.ax.grid(which='both', visible=True, alpha=0.65, color=cGrid)
     SP.ax.set_title(sTitl, size=labelSz)
 
     # draw the indicator on the main panel
@@ -1536,7 +1573,7 @@ def TestSliderScales(nFrames=0, showClumps=True, \
     polT = np.array([tMinWindo, tMaxWindo, tMaxWindo, tMinWindo, tMinWindo])
     polX = np.array([xLo, xLo, xHi, xHi, xLo])
 
-    dumFrame,  = SP.ax.plot(polT, polX, 'k-', lw=3, alpha=0.25, zorder=30, label='')
+    dumFrame,  = SP.ax.plot(polT, polX, color=cWindo, ls='-', lw=3, alpha=0.5, zorder=30, label='')
 
     
     # pre-clean the frames
@@ -1555,9 +1592,10 @@ def TestSliderScales(nFrames=0, showClumps=True, \
         SP.scatt._label = 'Measured'
         
         scattPred = SP.ax.scatter(SP.t, (VA-1.0)*yScale + xOffset, \
-                   c='g', marker='^', \
-                   s=16, label='DVA prediction', \
-                   zorder=30, alpha=0.4)
+                   c=cPred, \
+                                  marker='_', \
+                                  s=64, label='DVA prediction', \
+                                  zorder=30, alpha=alphaPred)
         
         leg = SP.ax.legend(loc=0)
         
@@ -1584,7 +1622,10 @@ def TestSliderScales(nFrames=0, showClumps=True, \
 
     # remove the frame indicator for the zoom
     dumFrame.remove()
-    SP.axInset.remove()
+    try:
+        SP.axInset.remove()
+    except:
+        noInset=True
     try:
         SP.cax.remove()
     except:
